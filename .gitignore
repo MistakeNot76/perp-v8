@@ -1,0 +1,14 @@
+__pycache__/
+.pytest_cache/
+node_modules/
+dashboard/dist/
+data/logs/*.log
+data/logs/*.json
+data/logs/*.md
+data/history/
+*.pyc
+*.log
+.env
+.env.bitget
+.env.live
+.env.demo

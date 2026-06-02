@@ -1,0 +1,61 @@
+system:
+  mode: paper                # paper | demo | live
+  log_level: INFO
+  log_file: data/logs/system.log
+  data_dir: data/history
+
+execution:
+  exchange: bitget
+  leverage: 15
+  notional_per_trade: 100
+  max_total_notional: 4000
+  max_open_positions: 20
+  partial_tp:
+    enabled: true
+    pct: 0.5                 # exit 50% at 1R
+    r_multiple: 1.0
+
+risk:
+  max_daily_loss_pct: 5.0
+  max_drawdown_pct: 15.0
+  kill_switch: false
+
+symbols:
+  - SOLUSDT
+  - BTCUSDT
+  - ETHUSDT
+
+strategy:
+  fvb_length: 8
+  fvb_band_mult: 1.0
+  bxt_l1: 5
+  bxt_l2: 30
+  bxt_l3: 5
+  bxt_ll1: 30
+  bxt_ll2: 8
+  hurst_window: 100
+  adx_period: 14
+  adx_max: 30
+  adx_trend_max: 35
+  rsi2_oversold: 10
+  rsi2_overbought: 90
+  confirmation_bars: 6
+
+exits:
+  tp_atr_mult: 2.0
+  sl_atr_mult: 1.5
+  min_tp_pct: 15.0
+  min_sl_pct: 6.0
+  breakeven_bars: 8
+  trail_after_be: 1.0
+  max_bars: 200
+
+fees:
+  maker_pct: 0.02
+  taker_pct: 0.06
+  slippage_pct: 0.05
+  funding_pct_per_8h: 0.01
+
+dashboard:
+  port: 9125
+  refresh_interval_ms: 2000

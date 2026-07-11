@@ -99,9 +99,9 @@ export default function Logs() {
         ) : data?.lines.length === 0 ? (
           <div className="muted">(empty)</div>
         ) : (
-          <pre className="log">
+          <pre className="logs-viewer">
             {(data?.lines ?? []).map((line, i) => (
-              <span key={i} className={`log-line lv-${classify(line).toUpperCase()}`}>
+              <span key={i} className={`log-line ${classify(line)}`}>
                 {line}
                 {"\n"}
               </span>

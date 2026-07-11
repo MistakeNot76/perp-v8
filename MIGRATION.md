@@ -68,11 +68,12 @@ Symbol-specific overrides: set `symbol_params.SYMBOL` in `config.yaml`, or run t
 
 ## Known Limitations
 - RSI(2) oversold/overbought at 10/90 are strict. May produce very few signals on less volatile symbols.
-- No multi-timeframe analysis. Single TF per symbol (set in strategy.tf).
-- No partial TP yet (config flag exists; exit engine does not implement it).
+- No multi-timeframe **entries**. Single TF per symbol (`strategy.tf`); lower TF is used for BXT **exits** only.
+- Partial TP is implemented (scale-out @ R-multiple) in the shared exit engine.
 - Entries use **outer** FVB bands (`lower2`/`upper2`) and require a **bullish** BXT zero-cross for longs / **bearish** for shorts.
 - Per-symbol params: use `symbol_params` in config.yaml and/or `data/params/{SYMBOL}.json` from `python -m optimize.runner`.
 - Unused compat knobs (loaded, ignored by indicators): `bxt_l3`, `bxt_ll1`, `bxt_ll2`, `adx_trend_max`.
+- Funding is a flat `%` estimate, not signed live exchange funding rates.
 
 ## Support
 - Tests: `cd /home/sdjmorris/perp-v8 && python3 -m pytest tests/ -v`

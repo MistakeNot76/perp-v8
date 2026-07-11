@@ -78,6 +78,24 @@ Unused / compat-only knobs (do not change signals): `bxt_l3`, `bxt_ll1`, `bxt_ll
 - **No fabricated data**: Validator enforces exit_price within bar's [low, high]
 - **Single config**: config.yaml controls everything; per-perp overlays optional
 - **Shared core**: Live, backtest, and optimizer use the same engine
+- **Honest costs**: Fees (maker/taker), slippage, and flat funding estimates are applied on every trade. PnL is on **notional** size; leverage sets margin only (`margin = notional / leverage`).
+- **Live execution**: Paper/demo/live place orders through the exchange adapter on OPEN/CLOSE/PARTIAL. Risk caps and kill switch are enforced and hot-reloaded from config.
+
+## Dashboard
+
+`python3 run_dashboard.py` → http://localhost:9125
+
+| Tab | Purpose |
+|-----|---------|
+| Positions | Equity, uPnL, open positions |
+| Trades | Closed trade log with filters |
+| Backtester | Backtest + per-symbol optimize |
+| Config | Common knobs + raw JSON |
+| Logs | Tail `data/logs/` |
+| Process | Live runner PID / mode status |
+| Validator | Phantom-exit / PnL invariant failures |
+
+Env for demo/live: `BITGET_API_KEY`, `BITGET_API_SECRET`, `BITGET_API_PASSPHRASE`.
 - **Honest trades**: `entry_reason` + exit reason/price on every trade
 
 ## Migration from perp-v7.5

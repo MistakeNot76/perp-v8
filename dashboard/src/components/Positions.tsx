@@ -4,8 +4,6 @@ import type { AppState, Position } from "../types";
 export default function Positions() {
   const { data, error, loading, refetch } = usePoll(() => api.state() as Promise<AppState | null>, 3000);
 
-  // AppState fields per backend may include: equity, available, upnl, margin, running,
-  // killswitch, daily_pnl, total_pnl, kill_switch, mode, positions, ...
   const s = (data ?? {}) as any;
   const positions: Position[] = s.positions ?? [];
   const equity = num(s.equity);
@@ -14,14 +12,26 @@ export default function Positions() {
   const margin = num(s.margin);
   const dailyPnl = num(s.daily_pnl);
   const totalPnl = num(s.total_pnl);
+  const running = Boolean(s.running);
+  const mode = s.mode as string | undefined;
+  const kill = Boolean(s.kill_switch ?? s.killswitch);
 
   return (
     <div>
       <div className="row" style={{ marginBottom: 8 }}>
+        <h2 style={{ margin: 0, flex: 1 }}>Positions</h2>
         <button className="secondary" onClick={refetch}>Refresh</button>
         {loading && <span className="muted">loading…</span>}
         {error && <span className="error">{error}</span>}
       </div>
+
+      {!running && !loading && !error && (
+        <div className="banner warn" style={{ marginBottom: 12 }}>
+          Bot not running{mode ? ` (mode=${mode})` : ""}.
+          {kill ? " Kill switch is armed." : " Start with "}
+          {!kill && <code className="mono">python3 run_live.py</code>}
+        </div>
+      )}
 
       <div className="grid">
         <Stat label="Equity" value={fmtNum(equity)} cls={(upnl ?? 0) >= 0 ? "pos" : "neg"} />

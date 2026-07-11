@@ -4,8 +4,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from live.runner import LiveRunner
+from live.runner import main
 
 if __name__ == "__main__":
-    runner = LiveRunner()
-    runner.run()
+    main()

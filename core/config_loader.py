@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List
 import yaml
 
-from core.models import SymbolConfig, StrategyParams, FeeConfig, Mode
+from core.models import SymbolConfig, StrategyParams, FeeConfig, Mode, RiskConfig
 
 
 def _req(d: dict, key: str, path: str):
@@ -77,6 +77,19 @@ def get_fee_config(cfg: dict) -> FeeConfig:
         taker_pct=f["taker_pct"],
         slippage_pct=f["slippage_pct"],
         funding_pct_per_8h=f["funding_pct_per_8h"],
+    )
+
+
+def get_risk_config(cfg: dict) -> RiskConfig:
+    """Load risk limits. Position caps live under execution: in config.yaml."""
+    risk = cfg.get("risk", {})
+    ex = cfg.get("execution", {})
+    return RiskConfig(
+        max_daily_loss_pct=float(risk.get("max_daily_loss_pct", 5.0)),
+        max_drawdown_pct=float(risk.get("max_drawdown_pct", 15.0)),
+        max_open_positions=int(ex.get("max_open_positions", risk.get("max_open_positions", 20))),
+        max_total_notional=float(ex.get("max_total_notional", risk.get("max_total_notional", 4000))),
+        kill_switch=bool(risk.get("kill_switch", False)),
     )
 
 

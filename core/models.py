@@ -171,6 +171,16 @@ class FeeConfig:
 
 
 @dataclass
+class RiskConfig:
+    """Live risk limits. Position caps may come from execution: in config.yaml."""
+    max_daily_loss_pct: float = 5.0
+    max_drawdown_pct: float = 15.0
+    max_open_positions: int = 20
+    max_total_notional: float = 4000.0
+    kill_switch: bool = False
+
+
+@dataclass
 class Indicators:
     n: int
     closes: List[float]

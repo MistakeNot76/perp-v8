@@ -3,6 +3,10 @@ data/history/*.json
 data/logs/*.log
 data/logs/*.json
 data/logs/*.md
+data/logs/*.jsonl
+data/state/*.json
+data/state/*.jsonl
+!data/state/.gitkeep
 __pycache__/
 *.pyc
 .pytest_cache/

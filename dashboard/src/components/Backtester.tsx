@@ -51,14 +51,14 @@ type OptimizeResult = {
     error?: string;
     best?: {
       params: Record<string, number>;
-      train_stats?: Record<string, number>;
-      test_stats?: Record<string, number> | null;
+      train_stats?: Record<string, unknown>;
+      test_stats?: Record<string, unknown> | null;
       score?: number;
     };
     ranked?: Array<{
       params: Record<string, number>;
-      train_stats?: Record<string, number>;
-      test_stats?: Record<string, number> | null;
+      train_stats?: Record<string, unknown>;
+      test_stats?: Record<string, unknown> | null;
       score?: number;
     }>;
   }>;
@@ -774,8 +774,8 @@ export default function Backtester() {
                         ? Number(te.profit_factor).toFixed(2)
                         : "—"}
                     </td>
-                    <td className="right mono">{tr?.trades ?? "—"}</td>
-                    <td className="right mono">{te?.trades ?? "—"}</td>
+                    <td className="right mono">{String(tr?.trades ?? "—")}</td>
+                    <td className="right mono">{String(te?.trades ?? "—")}</td>
                   </tr>
                 );
               })}

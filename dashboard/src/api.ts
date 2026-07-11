@@ -47,6 +47,9 @@ export interface Trade {
   closed_at?: string;
   ts?: number | string;
   fees?: number;
+  exit_ts?: number;
+  direction?: string;
+  entry_reason?: string;
   [k: string]: unknown;
 }
 
@@ -87,8 +90,8 @@ export interface BacktestRequest {
   symbols: string[];
   tf?: string;
   days?: number;
-  strategy?: Record<string, number>;
-  exits?: Record<string, number>;
+  strategy?: Record<string, unknown>;
+  exits?: Record<string, unknown>;
   fees?: Record<string, number>;
   leverage?: number;
   notional?: number;

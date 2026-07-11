@@ -57,6 +57,7 @@ def open_position(
         tp=tp,
         high_water=high_water,
         low_water=low_water,
+        entry_reason=signal.reason,
     )
     state.open_position = pos
     return pos
@@ -104,6 +105,7 @@ def close_position(
         bars_held=pos.bars_held,
         initial_sl=pos.initial_sl,
         tp=pos.tp,
+        entry_reason=pos.entry_reason,
     )
     validate_trade_math(trade, fees, trade.slippage)
     state.closed_trades.append(trade)

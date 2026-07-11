@@ -17,9 +17,9 @@ type FormState = {
   tf: string;
   days: number;
   fvb_length: number;
+  fvb_band_mult: number;
   bxt_l1: number;
   bxt_l2: number;
-  bxt_l3: number;
   adx_max: number;
   rsi2_oversold: number;
   rsi2_overbought: number;
@@ -36,7 +36,29 @@ type FormState = {
   slippage_pct: number;
 };
 
-const LS_KEY = "backtester:form:v2";
+type OptimizeResult = {
+  results?: Array<{
+    symbol: string;
+    error?: string;
+    best?: {
+      params: Record<string, number>;
+      train_stats?: Record<string, number>;
+      test_stats?: Record<string, number> | null;
+      score?: number;
+    };
+    ranked?: Array<{
+      params: Record<string, number>;
+      train_stats?: Record<string, number>;
+      test_stats?: Record<string, number> | null;
+      score?: number;
+    }>;
+  }>;
+  persisted?: { written?: Array<{ symbol: string; path: string }> };
+  duration_s?: number;
+  error?: string;
+};
+
+const LS_KEY = "backtester:form:v3";
 
 const TF_OPTIONS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 
@@ -44,10 +66,10 @@ const DEFAULT_FORM: FormState = {
   symbolsInput: "BTCUSDT, ETHUSDT, SOLUSDT",
   tf: "15m",
   days: 90,
-  fvb_length: 8,
+  fvb_length: 20,
+  fvb_band_mult: 1.5,
   bxt_l1: 5,
   bxt_l2: 30,
-  bxt_l3: 5,
   adx_max: 30,
   rsi2_oversold: 10,
   rsi2_overbought: 90,
@@ -77,6 +99,13 @@ const LINE_COLORS = [
   "#ffa657",
 ];
 
+/** Backend win_rate is 0–100. Guard against older 0–1 fractions. */
+function fmtWinRate(wr: number | undefined | null): string {
+  if (wr == null || !Number.isFinite(wr)) return "—";
+  const pct = wr <= 1.0 ? wr * 100 : wr;
+  return `${pct.toFixed(1)}%`;
+}
+
 function parseSymbols(input: string): { ok: string[]; err?: string } {
   const parts = input
     .split(",")
@@ -102,6 +131,7 @@ function NumField({
   min,
   max,
   onChange,
+  hint,
 }: {
   label: string;
   value: number;
@@ -109,6 +139,7 @@ function NumField({
   min?: number;
   max?: number;
   onChange: (v: number) => void;
+  hint?: string;
 }) {
   return (
     <div>
@@ -124,60 +155,70 @@ function NumField({
           if (Number.isFinite(n)) onChange(n);
         }}
       />
+      {hint && <p className="muted" style={{ margin: "4px 0 0", fontSize: 11 }}>{hint}</p>}
     </div>
   );
 }
 
 function formToRequest(f: FormState): BacktestRequest {
-  const overrides: Record<string, unknown> = {
-    strategy: {
-      fvb_length: f.fvb_length,
-      bxt_l1: f.bxt_l1,
-      bxt_l2: f.bxt_l2,
-      bxt_l3: f.bxt_l3,
-      adx_max: f.adx_max,
-      rsi2_oversold: f.rsi2_oversold,
-      rsi2_overbought: f.rsi2_overbought,
-      confirmation_bars: f.confirmation_bars,
-    },
-    exits: {
-      tp_atr_mult: f.tp_atr_mult,
-      sl_atr_mult: f.sl_atr_mult,
-      breakeven_bars: f.breakeven_bars,
-      trail_after_be: f.trail_after_be,
-      max_bars: f.max_bars,
-    },
-    fees: {
-      maker_pct: f.maker_pct,
-      taker_pct: f.taker_pct,
-      slippage_pct: f.slippage_pct,
-    },
-    execution: {
-      leverage: f.leverage,
-      notional: f.notional,
-    },
+  const strategy = {
+    fvb_length: f.fvb_length,
+    fvb_band_mult: f.fvb_band_mult,
+    bxt_l1: f.bxt_l1,
+    bxt_l2: f.bxt_l2,
+    adx_max: f.adx_max,
+    rsi2_oversold: f.rsi2_oversold,
+    rsi2_overbought: f.rsi2_overbought,
+    confirmation_bars: f.confirmation_bars,
   };
-  // Flatten overrides into the request: the backend may accept either a flat
-  // strategy/exits/fees payload or a nested overrides object.
+  const exits = {
+    tp_atr_mult: f.tp_atr_mult,
+    sl_atr_mult: f.sl_atr_mult,
+    breakeven_bars: f.breakeven_bars,
+    trail_after_be: f.trail_after_be,
+    max_bars: f.max_bars,
+  };
+  const fees = {
+    maker_pct: f.maker_pct,
+    taker_pct: f.taker_pct,
+    slippage_pct: f.slippage_pct,
+  };
   return {
     symbols: parseSymbols(f.symbolsInput).ok,
     tf: f.tf,
     days: f.days,
-    strategy: overrides.strategy as Record<string, number>,
-    exits: overrides.exits as Record<string, number>,
-    fees: overrides.fees as Record<string, number>,
+    strategy,
+    exits,
+    fees,
     leverage: f.leverage,
     notional: f.notional,
-    overrides,
+    overrides: {
+      strategy,
+      exits,
+      fees,
+      execution: { leverage: f.leverage, notional_per_trade: f.notional },
+    },
   };
 }
 
 export default function Backtester() {
   const [stored, setStored] = useLocalStorage<FormState | null>(LS_KEY, null);
-  const [form, setForm] = useState<FormState>(stored ?? DEFAULT_FORM);
+  const [form, setForm] = useState<FormState>(() => {
+    const s = stored ?? DEFAULT_FORM;
+    // migrate v2 forms missing fvb_band_mult
+    return {
+      ...DEFAULT_FORM,
+      ...s,
+      fvb_band_mult: (s as FormState).fvb_band_mult ?? DEFAULT_FORM.fvb_band_mult,
+    };
+  });
   const [result, setResult] = useState<BacktestResponse | null>(null);
+  const [optResult, setOptResult] = useState<OptimizeResult | null>(null);
   const [running, setRunning] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+  const [applyBest, setApplyBest] = useState(true);
   const [err, setErr] = useState<string>("");
+  const [mode, setMode] = useState<"backtest" | "optimize">("backtest");
 
   const update = (patch: Partial<FormState>) => {
     const next = { ...form, ...patch };
@@ -200,6 +241,9 @@ export default function Backtester() {
     setResult(null);
     try {
       const r = await api.backtest(formToRequest(form));
+      if ((r as { error?: string }).error) {
+        setErr(String((r as { error?: string }).error));
+      }
       setResult(r);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -208,16 +252,52 @@ export default function Backtester() {
     }
   };
 
+  const onOptimize = async () => {
+    if (!sym.ok.length) {
+      setErr(sym.err ?? "Invalid symbols");
+      return;
+    }
+    setErr("");
+    setOptimizing(true);
+    setOptResult(null);
+    try {
+      const r = await api.optimize({
+        symbols: sym.ok,
+        tf: form.tf,
+        days: form.days,
+        apply_config: applyBest,
+        write_params: true,
+      });
+      setOptResult(r as OptimizeResult);
+      // Apply best params into the form for the first symbol that has a best
+      const first = (r as OptimizeResult).results?.find((x) => x.best?.params);
+      if (first?.best?.params) {
+        const p = first.best.params;
+        update({
+          fvb_length: Number(p.fvb_length),
+          fvb_band_mult: Number(p.fvb_band_mult),
+          bxt_l1: Number(p.bxt_l1),
+          bxt_l2: Number(p.bxt_l2),
+          confirmation_bars: Number(p.confirmation_bars),
+        });
+      }
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
   const onReset = () => {
     setForm(DEFAULT_FORM);
     setStored(DEFAULT_FORM);
     setResult(null);
+    setOptResult(null);
     setErr("");
   };
 
   const results = result?.symbols ?? [];
 
-  // Build chart data: one row per index, one column per symbol.
   const chartData = useMemo(() => {
     if (!result) return [];
     const series = results.map((s) => ({
@@ -241,9 +321,24 @@ export default function Backtester() {
     <div className="panel">
       <h2>Backtester</h2>
       <p className="muted">
-        Symbols must end in USDT (e.g. BTCUSDT). Max 10. Strategy params
-        preloaded from config defaults; tweak and run.
+        Entries: close outside outer FVB band (×2) + bullish/bearish BXT zero-cross.
+        Optimize finds per-perp FVB/BXT settings via train/test grid search.
       </p>
+
+      <div className="row" style={{ marginBottom: 12, gap: 8 }}>
+        <button
+          className={mode === "backtest" ? "primary" : ""}
+          onClick={() => setMode("backtest")}
+        >
+          Backtest
+        </button>
+        <button
+          className={mode === "optimize" ? "primary" : ""}
+          onClick={() => setMode("optimize")}
+        >
+          Optimize
+        </button>
+      </div>
 
       <div className="card">
         <h3>Symbols & timeframe</h3>
@@ -291,148 +386,266 @@ export default function Backtester() {
         </div>
       </div>
 
-      <div className="card">
-        <h3>Strategy</h3>
-        <div className="form-grid">
-          <NumField
-            label="fvb_length"
-            value={form.fvb_length}
-            min={1}
-            onChange={(v) => update({ fvb_length: v })}
-          />
-          <NumField
-            label="bxt_l1"
-            value={form.bxt_l1}
-            min={1}
-            onChange={(v) => update({ bxt_l1: v })}
-          />
-          <NumField
-            label="bxt_l2"
-            value={form.bxt_l2}
-            min={1}
-            onChange={(v) => update({ bxt_l2: v })}
-          />
-          <NumField
-            label="bxt_l3"
-            value={form.bxt_l3}
-            min={1}
-            onChange={(v) => update({ bxt_l3: v })}
-          />
-          <NumField
-            label="adx_max"
-            value={form.adx_max}
-            min={0}
-            onChange={(v) => update({ adx_max: v })}
-          />
-          <NumField
-            label="rsi2_oversold"
-            value={form.rsi2_oversold}
-            min={0}
-            max={100}
-            onChange={(v) => update({ rsi2_oversold: v })}
-          />
-          <NumField
-            label="rsi2_overbought"
-            value={form.rsi2_overbought}
-            min={0}
-            max={100}
-            onChange={(v) => update({ rsi2_overbought: v })}
-          />
-          <NumField
-            label="confirmation_bars"
-            value={form.confirmation_bars}
-            min={1}
-            onChange={(v) => update({ confirmation_bars: v })}
-          />
-        </div>
-      </div>
+      {mode === "backtest" && (
+        <>
+          <div className="card">
+            <h3>Strategy (FVB + BXT)</h3>
+            <div className="form-grid">
+              <NumField
+                label="fvb_length"
+                value={form.fvb_length}
+                min={1}
+                onChange={(v) => update({ fvb_length: v })}
+                hint="Band std / VWAP smooth window"
+              />
+              <NumField
+                label="fvb_band_mult"
+                value={form.fvb_band_mult}
+                step={0.05}
+                min={0.1}
+                onChange={(v) => update({ fvb_band_mult: v })}
+                hint="Inner=1×mult; entry uses outer=2×mult"
+              />
+              <NumField
+                label="bxt_l1 (fast)"
+                value={form.bxt_l1}
+                min={1}
+                onChange={(v) => update({ bxt_l1: v })}
+              />
+              <NumField
+                label="bxt_l2 (slow)"
+                value={form.bxt_l2}
+                min={2}
+                onChange={(v) => update({ bxt_l2: v })}
+              />
+              <NumField
+                label="confirmation_bars"
+                value={form.confirmation_bars}
+                min={1}
+                onChange={(v) => update({ confirmation_bars: v })}
+                hint="BXT zero-cross lookback"
+              />
+              <NumField
+                label="adx_max"
+                value={form.adx_max}
+                min={0}
+                onChange={(v) => update({ adx_max: v })}
+              />
+              <NumField
+                label="rsi2_oversold"
+                value={form.rsi2_oversold}
+                min={0}
+                max={100}
+                onChange={(v) => update({ rsi2_oversold: v })}
+              />
+              <NumField
+                label="rsi2_overbought"
+                value={form.rsi2_overbought}
+                min={0}
+                max={100}
+                onChange={(v) => update({ rsi2_overbought: v })}
+              />
+            </div>
+            <p className="muted" style={{ marginTop: 8 }}>
+              Unused knobs (not wired): bxt_l3, bxt_ll1, bxt_ll2, adx_trend_max.
+            </p>
+          </div>
 
-      <div className="card">
-        <h3>Exits</h3>
-        <div className="form-grid">
-          <NumField
-            label="tp_atr_mult"
-            value={form.tp_atr_mult}
-            step={0.1}
-            onChange={(v) => update({ tp_atr_mult: v })}
-          />
-          <NumField
-            label="sl_atr_mult"
-            value={form.sl_atr_mult}
-            step={0.1}
-            onChange={(v) => update({ sl_atr_mult: v })}
-          />
-          <NumField
-            label="breakeven_bars"
-            value={form.breakeven_bars}
-            min={0}
-            onChange={(v) => update({ breakeven_bars: v })}
-          />
-          <NumField
-            label="trail_after_be"
-            value={form.trail_after_be}
-            step={0.1}
-            onChange={(v) => update({ trail_after_be: v })}
-          />
-          <NumField
-            label="max_bars"
-            value={form.max_bars}
-            min={1}
-            onChange={(v) => update({ max_bars: v })}
-          />
-        </div>
-      </div>
+          <div className="card">
+            <h3>Exits</h3>
+            <div className="form-grid">
+              <NumField
+                label="tp_atr_mult"
+                value={form.tp_atr_mult}
+                step={0.1}
+                onChange={(v) => update({ tp_atr_mult: v })}
+              />
+              <NumField
+                label="sl_atr_mult"
+                value={form.sl_atr_mult}
+                step={0.1}
+                onChange={(v) => update({ sl_atr_mult: v })}
+              />
+              <NumField
+                label="breakeven_bars"
+                value={form.breakeven_bars}
+                min={0}
+                onChange={(v) => update({ breakeven_bars: v })}
+              />
+              <NumField
+                label="trail_after_be"
+                value={form.trail_after_be}
+                step={0.1}
+                onChange={(v) => update({ trail_after_be: v })}
+              />
+              <NumField
+                label="max_bars"
+                value={form.max_bars}
+                min={1}
+                onChange={(v) => update({ max_bars: v })}
+              />
+            </div>
+          </div>
 
-      <div className="card">
-        <h3>Execution</h3>
-        <div className="form-grid">
-          <NumField
-            label="leverage (x)"
-            value={form.leverage}
-            min={1}
-            onChange={(v) => update({ leverage: v })}
-          />
-          <NumField
-            label="notional (USD)"
-            value={form.notional}
-            min={1}
-            onChange={(v) => update({ notional: v })}
-          />
-          <NumField
-            label="maker_pct"
-            value={form.maker_pct}
-            step={0.001}
-            onChange={(v) => update({ maker_pct: v })}
-          />
-          <NumField
-            label="taker_pct"
-            value={form.taker_pct}
-            step={0.001}
-            onChange={(v) => update({ taker_pct: v })}
-          />
-          <NumField
-            label="slippage_pct"
-            value={form.slippage_pct}
-            step={0.001}
-            onChange={(v) => update({ slippage_pct: v })}
-          />
-        </div>
-      </div>
+          <div className="card">
+            <h3>Execution</h3>
+            <div className="form-grid">
+              <NumField
+                label="leverage (x)"
+                value={form.leverage}
+                min={1}
+                onChange={(v) => update({ leverage: v })}
+              />
+              <NumField
+                label="notional (USD)"
+                value={form.notional}
+                min={1}
+                onChange={(v) => update({ notional: v })}
+              />
+              <NumField
+                label="maker_pct"
+                value={form.maker_pct}
+                step={0.001}
+                onChange={(v) => update({ maker_pct: v })}
+              />
+              <NumField
+                label="taker_pct"
+                value={form.taker_pct}
+                step={0.001}
+                onChange={(v) => update({ taker_pct: v })}
+              />
+              <NumField
+                label="slippage_pct"
+                value={form.slippage_pct}
+                step={0.001}
+                onChange={(v) => update({ slippage_pct: v })}
+              />
+            </div>
+          </div>
 
-      <div className="row" style={{ marginBottom: 16 }}>
-        <button
-          className="primary"
-          onClick={onSubmit}
-          disabled={running || !sym.ok.length}
-        >
-          {running ? "running…" : "run backtest"}
-        </button>
-        <button onClick={onReset}>reset form</button>
-      </div>
+          <div className="row" style={{ marginBottom: 16 }}>
+            <button
+              className="primary"
+              onClick={onSubmit}
+              disabled={running || !sym.ok.length}
+            >
+              {running ? "running…" : "run backtest"}
+            </button>
+            <button onClick={onReset}>reset form</button>
+          </div>
+        </>
+      )}
+
+      {mode === "optimize" && (
+        <div className="card">
+          <h3>Per-perp optimizer</h3>
+          <p className="muted">
+            Grid-searches fvb_length, fvb_band_mult, bxt_l1, bxt_l2, confirmation_bars
+            on a 70/30 train/test split. Writes data/params/&#123;SYMBOL&#125;.json.
+          </p>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <input
+              type="checkbox"
+              checked={applyBest}
+              onChange={(e) => setApplyBest(e.target.checked)}
+            />
+            Apply best params into config.yaml symbol_params
+          </label>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <button
+              className="primary"
+              onClick={onOptimize}
+              disabled={optimizing || !sym.ok.length}
+            >
+              {optimizing ? "optimizing… (may take a while)" : "run optimize"}
+            </button>
+            <button onClick={onReset}>reset</button>
+          </div>
+        </div>
+      )}
 
       {err && <p className="error">error: {err}</p>}
 
-      {result && (
+      {optResult && (
+        <div className="card">
+          <h3>Optimize results</h3>
+          {optResult.duration_s != null && (
+            <p className="muted">duration: {optResult.duration_s.toFixed(1)}s</p>
+          )}
+          <table>
+            <thead>
+              <tr>
+                <th>symbol</th>
+                <th>fvb_len</th>
+                <th>fvb_mult</th>
+                <th>bxt_l1</th>
+                <th>bxt_l2</th>
+                <th>conf</th>
+                <th className="right">train PF</th>
+                <th className="right">test PF</th>
+                <th className="right">train n</th>
+                <th className="right">test n</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(optResult.results ?? []).map((r) => {
+                if (r.error) {
+                  return (
+                    <tr key={r.symbol}>
+                      <td className="mono">{r.symbol}</td>
+                      <td colSpan={9} className="error">
+                        {r.error}
+                      </td>
+                    </tr>
+                  );
+                }
+                const p = r.best?.params;
+                const tr = r.best?.train_stats;
+                const te = r.best?.test_stats;
+                if (!p) {
+                  return (
+                    <tr key={r.symbol}>
+                      <td className="mono">{r.symbol}</td>
+                      <td colSpan={9} className="muted">
+                        no viable params
+                      </td>
+                    </tr>
+                  );
+                }
+                return (
+                  <tr key={r.symbol}>
+                    <td className="mono">{r.symbol}</td>
+                    <td className="mono">{p.fvb_length}</td>
+                    <td className="mono">{p.fvb_band_mult}</td>
+                    <td className="mono">{p.bxt_l1}</td>
+                    <td className="mono">{p.bxt_l2}</td>
+                    <td className="mono">{p.confirmation_bars}</td>
+                    <td className="right mono">
+                      {tr?.profit_factor != null && Number.isFinite(tr.profit_factor)
+                        ? Number(tr.profit_factor).toFixed(2)
+                        : "—"}
+                    </td>
+                    <td className="right mono">
+                      {te?.profit_factor != null && Number.isFinite(te.profit_factor)
+                        ? Number(te.profit_factor).toFixed(2)
+                        : "—"}
+                    </td>
+                    <td className="right mono">{tr?.trades ?? "—"}</td>
+                    <td className="right mono">{te?.trades ?? "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {optResult.persisted?.written && optResult.persisted.written.length > 0 && (
+            <p className="muted" style={{ marginTop: 8 }}>
+              wrote: {optResult.persisted.written.map((w) => w.path).join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+
+      {result && mode === "backtest" && (
         <>
           {result.totals && (
             <div className="card">
@@ -442,13 +655,12 @@ export default function Backtester() {
                 <span className="mono">{result.totals.trades}</span>
                 <span className="muted">·</span>
                 <span className="muted">win rate:</span>
-                <span className="mono">
-                  {(result.totals.win_rate * 100).toFixed(1)}%
-                </span>
+                <span className="mono">{fmtWinRate(result.totals.win_rate)}</span>
                 <span className="muted">·</span>
                 <span className="muted">profit factor:</span>
                 <span className="mono">
-                  {Number.isFinite(result.totals.profit_factor)
+                  {result.totals.profit_factor != null &&
+                  Number.isFinite(result.totals.profit_factor)
                     ? result.totals.profit_factor.toFixed(2)
                     : "—"}
                 </span>
@@ -466,7 +678,7 @@ export default function Backtester() {
                     <span className="muted">·</span>
                     <span className="muted">duration:</span>
                     <span className="mono">
-                      {result.duration_s.toFixed(1)}s
+                      {Number(result.duration_s).toFixed(1)}s
                     </span>
                   </>
                 )}
@@ -516,41 +728,31 @@ export default function Backtester() {
                   <th className="right">trades</th>
                   <th className="right">win rate</th>
                   <th className="right">net pnl</th>
-                  <th className="right">pnl %</th>
                   <th className="right">profit factor</th>
-                  <th className="right">max DD %</th>
+                  <th className="right">max DD $</th>
                 </tr>
               </thead>
               <tbody>
                 {results.map((s) => {
-                  const dd = s.max_dd_pct ?? s.max_drawdown_pct ?? 0;
+                  const dd = Number(s.max_drawdown ?? s.max_dd_pct ?? 0);
                   return (
                     <tr key={s.symbol}>
                       <td className="mono">{s.symbol}</td>
                       <td className="right mono">{s.trades}</td>
-                      <td className="right mono">
-                        {(s.win_rate * 100).toFixed(1)}%
-                      </td>
+                      <td className="right mono">{fmtWinRate(s.win_rate)}</td>
                       <td
                         className={`right mono ${
                           s.pnl >= 0 ? "pnl-pos" : "pnl-neg"
                         }`}
                       >
-                        {s.pnl.toFixed(2)}
-                      </td>
-                      <td
-                        className={`right mono ${
-                          (s.pnl_pct ?? 0) >= 0 ? "pnl-pos" : "pnl-neg"
-                        }`}
-                      >
-                        {(s.pnl_pct ?? 0).toFixed(2)}%
+                        {Number(s.pnl).toFixed(2)}
                       </td>
                       <td className="right mono">
-                        {Number.isFinite(s.profit_factor ?? 0)
-                          ? (s.profit_factor ?? 0).toFixed(2)
+                        {s.profit_factor != null && Number.isFinite(Number(s.profit_factor))
+                          ? Number(s.profit_factor).toFixed(2)
                           : "—"}
                       </td>
-                      <td className="right mono">{dd.toFixed(2)}%</td>
+                      <td className="right mono">{dd.toFixed(2)}</td>
                     </tr>
                   );
                 })}
@@ -572,55 +774,70 @@ export default function Backtester() {
                     <th className="right">entry</th>
                     <th className="right">exit</th>
                     <th className="right">pnl</th>
-                    <th>reason</th>
+                    <th>entry reason</th>
+                    <th>exit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {results
                     .flatMap((s) =>
-                      (s.trade_list ?? []).map((t) => ({ ...t, symbol: t.symbol ?? s.symbol }))
+                      (s.trade_list ?? []).map((t) => ({
+                        ...t,
+                        symbol: t.symbol ?? s.symbol,
+                      }))
                     )
                     .sort((a, b) => {
-                      const ta = typeof a.ts === "number" ? a.ts : new Date(a.closed_at ?? a.ts ?? 0).getTime();
-                      const tb = typeof b.ts === "number" ? b.ts : new Date(b.closed_at ?? b.ts ?? 0).getTime();
-                      return tb - ta;
+                      const ta =
+                        typeof a.exit_ts === "number"
+                          ? a.exit_ts
+                          : typeof a.ts === "number"
+                          ? a.ts
+                          : 0;
+                      const tb =
+                        typeof b.exit_ts === "number"
+                          ? b.exit_ts
+                          : typeof b.ts === "number"
+                          ? b.ts
+                          : 0;
+                      return Number(tb) - Number(ta);
                     })
                     .map((t, i) => {
                       const ep = t.entry ?? t.entry_price ?? 0;
                       const xp = t.exit ?? t.exit_price ?? t.price ?? 0;
+                      const side = String(t.side ?? t.direction ?? "").toLowerCase();
+                      const ts =
+                        typeof t.exit_ts === "number"
+                          ? t.exit_ts
+                          : typeof t.ts === "number"
+                          ? t.ts
+                          : 0;
                       return (
                         <tr key={`${t.symbol}-${i}`}>
                           <td className="muted mono">
-                            {t.closed_at
-                              ? String(t.closed_at).slice(0, 19).replace("T", " ")
-                              : typeof t.ts === "number"
-                              ? new Date(t.ts * (t.ts < 1e12 ? 1000 : 1))
+                            {ts
+                              ? new Date(ts < 1e12 ? ts * 1000 : ts)
                                   .toISOString()
                                   .slice(0, 19)
                                   .replace("T", " ")
                               : "—"}
                           </td>
                           <td className="mono">{t.symbol}</td>
-                          <td
-                            className={
-                              String(t.side).toLowerCase() === "long" ||
-                              t.side === "buy"
-                                ? "long"
-                                : "short"
-                            }
-                          >
-                            {String(t.side).toUpperCase()}
+                          <td className={side === "long" || side === "buy" ? "long" : "short"}>
+                            {side.toUpperCase() || "—"}
                           </td>
                           <td className="right mono">{Number(ep).toFixed(4)}</td>
                           <td className="right mono">{Number(xp).toFixed(4)}</td>
                           <td
                             className={`right mono ${
-                              t.pnl >= 0 ? "pnl-pos" : "pnl-neg"
+                              Number(t.pnl) >= 0 ? "pnl-pos" : "pnl-neg"
                             }`}
                           >
-                            {t.pnl.toFixed(4)}
+                            {Number(t.pnl).toFixed(4)}
                           </td>
-                          <td>{t.reason ?? "—"}</td>
+                          <td className="muted" style={{ fontSize: 11 }}>
+                            {String(t.entry_reason ?? "—")}
+                          </td>
+                          <td>{String(t.reason ?? "—")}</td>
                         </tr>
                       );
                     })}

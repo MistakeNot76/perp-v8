@@ -83,6 +83,7 @@ class Position:
     bars_held: int = 0
     partial_tp_hit: bool = False
     partial_tp_qty: float = 0.0
+    entry_reason: str = ""
 
     @property
     def qty(self) -> float:
@@ -128,6 +129,7 @@ class Trade:
     initial_sl: float
     tp: float
     partial_tp_hit: bool = False
+    entry_reason: str = ""
 
 
 @dataclass

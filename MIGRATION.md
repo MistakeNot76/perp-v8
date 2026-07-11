@@ -64,16 +64,19 @@ If you had custom values in perp-v7.5's config files, translate them to perp-v8'
 | `params/fvb_length` | `strategy.fvb_length` |
 | `params/bxt_l1/l2/l3` | `strategy.bxt_l1/l2/l3` |
 
-Symbol-specific overrides are not yet supported in perp-v8. The same config applies to all symbols. If you need per-symbol params, edit `get_symbol_config` in `core/config_loader.py`.
+Symbol-specific overrides: set `symbol_params.SYMBOL` in `config.yaml`, or run the optimizer which writes `data/params/{SYMBOL}.json` (JSON wins). Live and backtest both call `get_strategy_params(cfg, symbol)` / `get_symbol_config(cfg, symbol)`.
 
 ## Known Limitations
 - RSI(2) oversold/overbought at 10/90 are strict. May produce very few signals on less volatile symbols.
-- No multi-timeframe analysis. Single TF per symbol (set in `exits` or per-symbol override).
-- No partial TP yet (code is there, default is off).
-- No walk-forward optimization tooling (the v7.5 walk_forward.py was not ported).
+- No multi-timeframe analysis. Single TF per symbol (set in strategy.tf).
+- No partial TP yet (config flag exists; exit engine does not implement it).
+- Entries use **outer** FVB bands (`lower2`/`upper2`) and require a **bullish** BXT zero-cross for longs / **bearish** for shorts.
+- Per-symbol params: use `symbol_params` in config.yaml and/or `data/params/{SYMBOL}.json` from `python -m optimize.runner`.
+- Unused compat knobs (loaded, ignored by indicators): `bxt_l3`, `bxt_ll1`, `bxt_ll2`, `adx_trend_max`.
 
 ## Support
 - Tests: `cd /home/sdjmorris/perp-v8 && python3 -m pytest tests/ -v`
 - Live runner: `python3 run_live.py`
-- Backtest: `python3 -m backtest.runner --symbols SOLUSDT,BTCUSDT --tf 5m --days 90`
+- Backtest: `python3 -m backtest.runner --symbols SOLUSDT,BTCUSDT --tf 15m --days 90`
+- Optimize: `python3 -m optimize.runner --symbols SOLUSDT,BTCUSDT --tf 15m --days 90 --apply-config`
 - Dashboard: `python3 run_dashboard.py` then open http://localhost:9125

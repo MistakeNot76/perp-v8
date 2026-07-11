@@ -87,6 +87,7 @@ def test_close_position_uses_round_trip_slippage():
     assert trade.slippage == pytest.approx(1.0)  # 2 * 0.05% * 1000
     expected_fees = fees.entry_cost(1000) + fees.exit_cost(1000)
     assert trade.fees == pytest.approx(expected_fees)
+    assert trade.entry_reason == "test"
     gross = (105.0 - 100.0) * trade.qty
     assert trade.pnl_net == pytest.approx(gross - trade.fees - trade.slippage - trade.funding)
 

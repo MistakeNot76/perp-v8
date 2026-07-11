@@ -26,6 +26,7 @@ def serialize_position(pos: Optional[Position]) -> Optional[dict]:
         "low_water": pos.low_water,
         "bars_held": pos.bars_held,
         "partial_tp_hit": pos.partial_tp_hit,
+        "entry_reason": pos.entry_reason,
     }
 
 
@@ -48,6 +49,7 @@ def deserialize_position(data: Optional[dict]) -> Optional[Position]:
         low_water=data["low_water"],
         bars_held=data["bars_held"],
         partial_tp_hit=data.get("partial_tp_hit", False),
+        entry_reason=data.get("entry_reason", ""),
     )
 
 

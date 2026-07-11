@@ -41,7 +41,7 @@ class LiveRunner:
 
     def _init_symbol_state(self, symbol: str) -> EngineState:
         sym_cfg = get_symbol_config(self.cfg, symbol)
-        strategy_params = get_strategy_params(self.cfg)
+        strategy_params = get_strategy_params(self.cfg, symbol)
         tf = sym_cfg.tf
         bars = self.exchange.fetch_candles(symbol, tf, limit=500)
         indicators = compute_all(bars, strategy_params)
@@ -72,7 +72,7 @@ class LiveRunner:
                     new_bars = self.exchange.fetch_candles(symbol, state.sym_cfg.tf, limit=1)
                     if new_bars and new_bars[-1].ts > state.bars[-1].ts:
                         state.bars.append(new_bars[-1])
-                        state.indicators = compute_all(state.bars, get_strategy_params(self.cfg))
+                        state.indicators = compute_all(state.bars, get_strategy_params(self.cfg, symbol))
                         had_position = state.open_position is not None
                         before_count = len(state.closed_trades)
                         step(state, len(state.bars) - 1)
@@ -84,6 +84,7 @@ class LiveRunner:
                                 "size": state.open_position.size,
                                 "sl": state.open_position.current_sl,
                                 "tp": state.open_position.tp,
+                                "entry_reason": state.open_position.entry_reason,
                             })
                         if len(state.closed_trades) > before_count:
                             trade = state.closed_trades[-1]
@@ -93,6 +94,7 @@ class LiveRunner:
                                 "exit": trade.exit_price,
                                 "pnl_net": trade.pnl_net,
                                 "reason": trade.reason.value,
+                                "entry_reason": trade.entry_reason,
                                 "bars_held": trade.bars_held,
                             })
                 time.sleep(5)

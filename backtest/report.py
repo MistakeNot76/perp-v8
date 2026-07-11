@@ -41,15 +41,16 @@ def generate_report(results: list) -> str:
         lines.append("")
         lines.append(f"Bars: {r.get('bars', 0)} | From: {r.get('from_ts', 0)} | To: {r.get('to_ts', 0)}")
         lines.append("")
-        lines.append("| # | Direction | Entry | Exit | PnL | Reason | Bars |")
-        lines.append("|---|---|---|---|---|---|---|")
+        lines.append("| # | Direction | Entry | Exit | PnL | Entry Reason | Exit | Bars | Fees | Slip | Fund |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
         for i, t in enumerate(r["trades"][:50]):
             lines.append(
                 f"| {i+1} | {t['direction']} | {t['entry_price']:.4f} | {t['exit_price']:.4f} | "
-                f"${t['pnl_net']:.2f} | {t['reason']} | {t['bars_held']} |"
+                f"${t['pnl_net']:.2f} | {t.get('entry_reason', '')} | {t['reason']} | {t['bars_held']} | "
+                f"${t.get('fees', 0):.2f} | ${t.get('slippage', 0):.2f} | ${t.get('funding', 0):.2f} |"
             )
         if len(r["trades"]) > 50:
-            lines.append(f"| ... | ({len(r['trades'])-50} more trades) | | | | | |")
+            lines.append(f"| ... | ({len(r['trades'])-50} more trades) | | | | | | | | | |")
         lines.append("")
 
     return "\n".join(lines)

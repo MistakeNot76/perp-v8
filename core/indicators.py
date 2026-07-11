@@ -208,7 +208,14 @@ def fvb_bands(
 
 
 def bxt(bars: List[Bar], l1: int = 5, l2: int = 30, l3: int = 5) -> tuple:
-    """Bar Strength Index Trend: SMA diff of two MAs of typical price."""
+    """Bar Strength Index Trend: SMA diff of two MAs of typical price.
+
+    ``bxt_long`` = SMA(tp, l1) - SMA(tp, l2). Positive = bullish (fast above slow).
+    ``bxt_short`` = -bxt_long (mirror series; kept for compatibility).
+
+    ``l3`` is unused — retained for call-site / config compatibility only.
+    """
+    _ = l3
     if not bars:
         return [], []
     tp = [(b.high + b.low + b.close) / 3 for b in bars]

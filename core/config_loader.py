@@ -1,6 +1,8 @@
 """YAML config loader. Single source of truth for all system parameters."""
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List, Optional
+import copy
+import json
 import yaml
 
 from core.models import SymbolConfig, StrategyParams, FeeConfig, Mode
@@ -28,45 +30,122 @@ def get_mode(cfg: dict) -> Mode:
     return Mode(cfg["system"]["mode"].lower())
 
 
-def get_strategy_params(cfg: dict) -> StrategyParams:
-    s = cfg["strategy"]
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Return a deep copy of base with override keys merged in."""
+    out = copy.deepcopy(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def load_symbol_params_file(symbol: str, params_dir: str = "data/params") -> dict:
+    """Load optional per-symbol JSON overrides from data/params/{SYMBOL}.json."""
+    p = Path(params_dir) / f"{symbol.upper()}.json"
+    if not p.exists():
+        return {}
+    with open(p) as f:
+        data = json.load(f)
+    return data if isinstance(data, dict) else {}
+
+
+def get_symbol_overrides(cfg: dict, symbol: str, params_dir: Optional[str] = None) -> dict:
+    """
+    Merge per-symbol overrides from config.yaml `symbol_params` and optional JSON file.
+
+    JSON file wins over yaml map for the same keys (optimizer writes JSON).
+    Set cfg['_skip_param_files']=True to ignore data/params during grid search.
+    """
+    sym = symbol.upper()
+    yaml_map = cfg.get("symbol_params") or {}
+    from_yaml = yaml_map.get(sym) or yaml_map.get(symbol) or {}
+    if not isinstance(from_yaml, dict):
+        from_yaml = {}
+
+    if cfg.get("_skip_param_files"):
+        return dict(from_yaml)
+
+    data_dir = params_dir
+    if data_dir is None:
+        data_dir = str(Path(cfg.get("system", {}).get("data_dir", "data/history")).parent / "params")
+    from_file = load_symbol_params_file(sym, data_dir)
+    return _deep_merge(from_yaml, from_file)
+
+
+def _strategy_dict(cfg: dict, symbol: Optional[str] = None) -> dict:
+    s = dict(cfg["strategy"])
+    if symbol:
+        ov = get_symbol_overrides(cfg, symbol)
+        # Flat keys or nested under "strategy"
+        strat_ov = ov.get("strategy") if isinstance(ov.get("strategy"), dict) else {}
+        flat = {k: v for k, v in ov.items() if k != "strategy" and k != "exits" and k != "execution"}
+        s.update(flat)
+        s.update(strat_ov)
+    return s
+
+
+def get_strategy_params(cfg: dict, symbol: Optional[str] = None) -> StrategyParams:
+    s = _strategy_dict(cfg, symbol)
     return StrategyParams(
-        fvb_length=s["fvb_length"],
-        fvb_band_mult=s["fvb_band_mult"],
-        bxt_l1=s["bxt_l1"],
-        bxt_l2=s["bxt_l2"],
-        bxt_l3=s["bxt_l3"],
-        bxt_ll1=s["bxt_ll1"],
-        bxt_ll2=s["bxt_ll2"],
-        hurst_window=s["hurst_window"],
-        adx_period=s["adx_period"],
+        fvb_length=int(s["fvb_length"]),
+        fvb_band_mult=float(s["fvb_band_mult"]),
+        bxt_l1=int(s["bxt_l1"]),
+        bxt_l2=int(s["bxt_l2"]),
+        bxt_l3=int(s.get("bxt_l3", 5)),
+        bxt_ll1=int(s.get("bxt_ll1", 30)),
+        bxt_ll2=int(s.get("bxt_ll2", 8)),
+        hurst_window=int(s.get("hurst_window", 100)),
+        adx_period=int(s.get("adx_period", 14)),
     )
 
 
 def get_symbol_config(cfg: dict, symbol: str) -> SymbolConfig:
     ex = cfg["execution"]
-    st = cfg["strategy"]
-    ex_exit = cfg["exits"]
+    st = _strategy_dict(cfg, symbol)
+    ex_exit = dict(cfg["exits"])
+    ov = get_symbol_overrides(cfg, symbol)
+    if isinstance(ov.get("exits"), dict):
+        ex_exit.update(ov["exits"])
+    exec_ov = ov.get("execution") if isinstance(ov.get("execution"), dict) else {}
+    leverage = int(exec_ov.get("leverage", ex["leverage"]))
+    notional = float(exec_ov.get("notional_per_trade", exec_ov.get("notional", ex["notional_per_trade"])))
+
+    # Flat exit/filter overrides allowed at symbol_params top level
+    for k in (
+        "min_tp_pct", "min_sl_pct", "tp_atr_mult", "sl_atr_mult",
+        "breakeven_bars", "trail_after_be", "max_bars",
+        "confirmation_bars", "adx_max", "adx_trend_max",
+        "rsi2_oversold", "rsi2_overbought", "hurst_max",
+    ):
+        if k in ov:
+            if k in ("confirmation_bars", "adx_max", "adx_trend_max",
+                     "rsi2_oversold", "rsi2_overbought", "hurst_max"):
+                st[k] = ov[k]
+            else:
+                ex_exit[k] = ov[k]
+
     return SymbolConfig(
         tf=st.get("tf", "15m"),
-        leverage=ex["leverage"],
-        notional=ex["notional_per_trade"],
-        min_tp_pct=ex_exit["min_tp_pct"],
-        min_sl_pct=ex_exit["min_sl_pct"],
-        tp_atr_mult=ex_exit["tp_atr_mult"],
-        sl_atr_mult=ex_exit["sl_atr_mult"],
-        confirmation_bars=st["confirmation_bars"],
-        breakeven_bars=ex_exit["breakeven_bars"],
-        trail_after_be=ex_exit["trail_after_be"],
-        max_bars=ex_exit["max_bars"],
-        adx_max=st["adx_max"],
-        adx_trend_max=st["adx_trend_max"],
-        rsi2_oversold=st["rsi2_oversold"],
-        rsi2_overbought=st["rsi2_overbought"],
-        hurst_max=st.get("hurst_max", 0.85),
-        partial_tp_enabled=ex["partial_tp"]["enabled"],
-        partial_tp_pct=ex["partial_tp"]["pct"],
-        partial_tp_r=ex["partial_tp"]["r_multiple"],
+        leverage=leverage,
+        notional=notional,
+        min_tp_pct=float(ex_exit["min_tp_pct"]),
+        min_sl_pct=float(ex_exit["min_sl_pct"]),
+        tp_atr_mult=float(ex_exit["tp_atr_mult"]),
+        sl_atr_mult=float(ex_exit["sl_atr_mult"]),
+        confirmation_bars=int(st["confirmation_bars"]),
+        breakeven_bars=int(ex_exit["breakeven_bars"]),
+        trail_after_be=float(ex_exit["trail_after_be"]),
+        max_bars=int(ex_exit["max_bars"]),
+        adx_max=float(st["adx_max"]),
+        adx_trend_max=float(st.get("adx_trend_max", 35)),
+        rsi2_oversold=float(st["rsi2_oversold"]),
+        rsi2_overbought=float(st["rsi2_overbought"]),
+        hurst_max=float(st.get("hurst_max", 0.85)),
+        partial_tp_enabled=bool(ex["partial_tp"]["enabled"]),
+        partial_tp_pct=float(ex["partial_tp"]["pct"]),
+        partial_tp_r=float(ex["partial_tp"]["r_multiple"]),
     )
 
 
@@ -82,6 +161,84 @@ def get_fee_config(cfg: dict) -> FeeConfig:
 
 def get_dashboard_port(cfg: dict) -> int:
     return cfg["dashboard"]["port"]
+
+
+def apply_overrides(cfg: dict, overrides: Optional[Dict[str, Any]] = None) -> dict:
+    """
+    Deep-merge nested overrides into a config copy.
+
+    Accepts either nested sections (strategy/exits/fees/execution) or flat
+    keys that belong to those sections. Maps execution.notional -> notional_per_trade.
+    """
+    out = copy.deepcopy(cfg)
+    if not overrides:
+        return out
+
+    section_keys = {"strategy", "exits", "fees", "execution", "system", "risk", "symbol_params"}
+    nested: Dict[str, Any] = {}
+    flat: Dict[str, Any] = {}
+    for k, v in overrides.items():
+        if k in section_keys and isinstance(v, dict):
+            nested[k] = v
+        else:
+            flat[k] = v
+
+    out = _deep_merge(out, nested)
+
+    # Remap notional alias
+    if "execution" in out and isinstance(out["execution"], dict):
+        if "notional" in out["execution"] and "notional_per_trade" not in out["execution"]:
+            out["execution"]["notional_per_trade"] = out["execution"].pop("notional")
+        elif "notional" in out["execution"]:
+            out["execution"]["notional_per_trade"] = out["execution"].pop("notional")
+
+    if "notional" in flat:
+        out.setdefault("execution", {})["notional_per_trade"] = flat.pop("notional")
+    if "leverage" in flat:
+        out.setdefault("execution", {})["leverage"] = flat.pop("leverage")
+
+    strategy_keys = set(out.get("strategy", {}).keys())
+    exits_keys = set(out.get("exits", {}).keys())
+    fees_keys = set(out.get("fees", {}).keys())
+    exec_keys = set(out.get("execution", {}).keys()) | {"notional_per_trade", "notional"}
+
+    for k, v in flat.items():
+        if k in strategy_keys or k in {
+            "fvb_length", "fvb_band_mult", "bxt_l1", "bxt_l2", "bxt_l3",
+            "confirmation_bars", "adx_max", "rsi2_oversold", "rsi2_overbought",
+            "hurst_max", "tf",
+        }:
+            out.setdefault("strategy", {})[k] = v
+        elif k in exits_keys:
+            out.setdefault("exits", {})[k] = v
+        elif k in fees_keys:
+            out.setdefault("fees", {})[k] = v
+        elif k in exec_keys:
+            key = "notional_per_trade" if k == "notional" else k
+            out.setdefault("execution", {})[key] = v
+
+    return out
+
+
+def save_symbol_params(symbol: str, params: dict, params_dir: str = "data/params") -> Path:
+    """Write per-symbol optimized params to JSON."""
+    d = Path(params_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{symbol.upper()}.json"
+    with open(path, "w") as f:
+        json.dump(params, f, indent=2)
+    return path
+
+
+def merge_symbol_params_into_config(cfg: dict, symbol: str, params: dict) -> dict:
+    """Update cfg['symbol_params'][SYMBOL] with params (returns mutated cfg)."""
+    sym = symbol.upper()
+    cfg.setdefault("symbol_params", {})
+    existing = cfg["symbol_params"].get(sym) or {}
+    if not isinstance(existing, dict):
+        existing = {}
+    cfg["symbol_params"][sym] = _deep_merge(existing, params)
+    return cfg
 
 
 def save_config(cfg: dict, path: str = "config.yaml") -> None:

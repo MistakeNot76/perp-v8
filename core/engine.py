@@ -81,7 +81,7 @@ def close_position(
         gross = (pos.entry_price - exit_price) * pos.size
 
     fees = state.fees.entry_cost(pos.notional) + state.fees.exit_cost(pos.notional)
-    slippage = state.fees.slippage_pct * pos.notional / 100
+    slippage = state.fees.round_trip_slippage(pos.notional)
     funding = state.fees.funding_cost(pos.notional, pos.bars_held, state.bar_minutes)
     net = gross - fees - slippage - funding
 
@@ -97,7 +97,7 @@ def close_position(
         leverage=pos.leverage,
         pnl_raw=gross,
         fees=fees,
-        slippage=state.fees.slippage_pct * pos.notional / 100,
+        slippage=slippage,
         funding=funding,
         pnl_net=net,
         reason=reason,

@@ -16,6 +16,7 @@ from core.data_loader import load_candles, resample
 from core.indicators import compute_all
 from core.engine import EngineState, run_bars
 from core.models import SymbolConfig, FeeConfig, StrategyParams, Bar, Trade
+from core.timeframes import tf_to_minutes, bars_per_day
 from backtest.report import generate_report
 
 
@@ -57,7 +58,7 @@ def run_backtest_on_symbol(
             "stats": None,
         }
 
-    if days and len(bars) > days * (1440 // int(sym_cfg.tf.replace("m", ""))):
+    if days and len(bars) > days * bars_per_day(sym_cfg.tf):
         cutoff = bars[-1].ts - days * 86400 * 1000
         bars = [b for b in bars if b.ts >= cutoff]
 
@@ -76,7 +77,7 @@ def run_backtest_on_symbol(
         indicators=indicators,
         sym_cfg=sym_cfg,
         fees=fees,
-        bar_minutes=int(sym_cfg.tf.replace("m", "")),
+        bar_minutes=tf_to_minutes(sym_cfg.tf),
     )
     trades = run_bars(state, 0)
     stats = compute_stats(trades)

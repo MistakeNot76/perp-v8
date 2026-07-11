@@ -154,10 +154,16 @@ class FeeConfig:
     funding_pct_per_8h: float = 0.01
 
     def entry_cost(self, notional: float) -> float:
+        """Taker fee on entry only (slippage is separate)."""
         return notional * self.taker_pct / 100
 
     def exit_cost(self, notional: float) -> float:
+        """Taker fee on exit only (slippage is separate)."""
         return notional * self.taker_pct / 100
+
+    def round_trip_slippage(self, notional: float) -> float:
+        """Slippage on both entry and exit fills."""
+        return 2 * notional * self.slippage_pct / 100
 
     def funding_cost(self, notional: float, bars: int, bar_minutes: int) -> float:
         periods_8h = (bars * bar_minutes) / 480

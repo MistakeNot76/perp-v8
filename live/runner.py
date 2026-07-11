@@ -15,6 +15,7 @@ from core.config_loader import load_config, get_symbols, get_mode, get_symbol_co
 from core.indicators import compute_all
 from core.engine import EngineState, step, run_bars
 from core.models import Mode, Direction, Bar, Trade, ExitReason
+from core.timeframes import tf_to_minutes
 from live.exchange import get_exchange
 from live.state import append_signal_log, load_signal_log
 
@@ -50,7 +51,7 @@ class LiveRunner:
             indicators=indicators,
             sym_cfg=sym_cfg,
             fees=self.fees,
-            bar_minutes=int(tf.replace("m", "")),
+            bar_minutes=tf_to_minutes(tf),
         )
 
     def _on_position_update(self, symbol: str, action: str, record: dict):
@@ -72,9 +73,11 @@ class LiveRunner:
                     if new_bars and new_bars[-1].ts > state.bars[-1].ts:
                         state.bars.append(new_bars[-1])
                         state.indicators = compute_all(state.bars, get_strategy_params(self.cfg))
+                        had_position = state.open_position is not None
                         before_count = len(state.closed_trades)
                         step(state, len(state.bars) - 1)
-                        if state.open_position is not None and before_count == len(state.closed_trades):
+                        # Only log OPEN on flat → open transition (not every bar while open)
+                        if state.open_position is not None and not had_position:
                             self._on_position_update(symbol, "OPEN", {
                                 "direction": state.open_position.direction.value,
                                 "entry_price": state.open_position.entry_price,

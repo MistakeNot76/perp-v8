@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import ccxt
 from core.data_loader import _parse_candle, save_candles
+from core.timeframes import bars_per_day
 
 
 # ── Symbol translation ──────────────────────────────────────────────
@@ -125,13 +126,7 @@ def main():
         # Verify timestamp range
         first_ts = bars[0].ts
         last_ts = bars[-1].ts
-        expected_min = 25920  # ~90 days of 5m candles
-        if args.tf == "5m":
-            expected_min = args.days * 288
-        elif args.tf == "1m":
-            expected_min = args.days * 1440
-        elif args.tf == "15m":
-            expected_min = args.days * 96
+        expected_min = args.days * bars_per_day(args.tf)
 
         save_candles(sym, args.tf, bars, data_dir=args.data_dir)
         pct = len(bars) / expected_min * 100 if expected_min > 0 else 0

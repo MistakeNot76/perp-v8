@@ -48,8 +48,8 @@ def check_entry(
     Check if there's an entry signal at bar_idx.
     Returns EntrySignal or None.
 
-    Long: price below fvb_lower1, ADX<adx_max, Hurst<=0.6, RSI(2)<oversold, BX_short crossed above 0
-    Short: price above fvb_upper1, ADX<adx_max, Hurst<=0.6, RSI(2)>overbought, BX_long crossed below 0
+    Long: price below fvb_lower1, ADX<adx_max, Hurst<=hurst_max, RSI(2)<oversold, BX_short crossed above 0
+    Short: price above fvb_upper1, ADX<adx_max, Hurst<=hurst_max, RSI(2)>overbought, BX_long crossed below 0
     """
     if bar_idx < sym_cfg.confirmation_bars + 1:
         return None

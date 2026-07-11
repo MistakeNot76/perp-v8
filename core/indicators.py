@@ -129,12 +129,19 @@ def _vwap(bars: List[Bar]) -> List[Optional[float]]:
     return vwap_series
 
 
-def fvb(bars: List[Bar], length: int = 20) -> List[Optional[float]]:
-    """Fair Value Bubble: VWAP series with daily reset.
-    The returned series is the VWAP — used by fvb_bands() to compute
-    multiplicative bands that price can actually penetrate.
-    """
+def vwap(bars: List[Bar]) -> List[Optional[float]]:
+    """Daily-reset VWAP. Used as the FVB center line."""
     return _vwap(bars)
+
+
+def fvb(bars: List[Bar], length: int = 20) -> List[Optional[float]]:
+    """Fair Value Bubble center line = daily-reset VWAP.
+
+    ``length`` is unused here — band width uses ``fvb_length`` via
+    ``fvb_bands(..., period=)``. Kept for call-site compatibility.
+    """
+    _ = length  # band period is applied in fvb_bands, not the center line
+    return vwap(bars)
 
 
 def fvb_bands(

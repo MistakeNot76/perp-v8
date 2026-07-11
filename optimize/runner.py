@@ -39,6 +39,16 @@ DEFAULT_GRID = {
     "bxt_l1": [3, 5, 8],
     "bxt_l2": [20, 30, 40, 50],
     "confirmation_bars": [3, 6, 9],
+    # Exit A/B — both FVB targets available for testing
+    "fvb_exit_target": ["vwap", "inner"],
+}
+
+# Exit-mode toggles swept as nested overrides (optional second-pass grid)
+EXIT_MODE_GRID = {
+    "fvb_exit_enabled": [True],
+    "bxt_exit_same_tf_enabled": [True, False],
+    "bxt_exit_ltf_enabled": [True, False],
+    "use_fixed_tp": [True, False],
 }
 
 
@@ -85,17 +95,30 @@ def _split_bars(bars: list, train_frac: float) -> Tuple[list, list]:
 
 
 def _apply_trial_to_cfg(cfg: dict, params: dict) -> dict:
-    """Build a config copy with trial strategy params (global, no symbol file)."""
-    ov = {
-        "strategy": {
-            "fvb_length": int(params["fvb_length"]),
-            "fvb_band_mult": float(params["fvb_band_mult"]),
-            "bxt_l1": int(params["bxt_l1"]),
-            "bxt_l2": int(params["bxt_l2"]),
-            "confirmation_bars": int(params["confirmation_bars"]),
-        }
-    }
-    # Clear symbol_params so trial is pure
+    """Build a config copy with trial strategy/exit params (no symbol file)."""
+    strategy = {}
+    exits = {}
+    for k, v in params.items():
+        if k == "fvb_exit_target":
+            exits.setdefault("fvb_exit", {})["enabled"] = True
+            exits.setdefault("fvb_exit", {})["target"] = v
+        elif k in ("fvb_exit_enabled",):
+            exits.setdefault("fvb_exit", {})["enabled"] = bool(v)
+        elif k == "bxt_exit_same_tf_enabled":
+            exits.setdefault("bxt_exit", {}).setdefault("same_tf", {})["enabled"] = bool(v)
+        elif k == "bxt_exit_ltf_enabled":
+            exits.setdefault("bxt_exit", {}).setdefault("lower_tf", {})["enabled"] = bool(v)
+        elif k == "use_fixed_tp":
+            exits["use_fixed_tp"] = bool(v)
+        elif k in ("fvb_length", "fvb_band_mult", "bxt_l1", "bxt_l2", "confirmation_bars"):
+            strategy[k] = v
+        else:
+            strategy[k] = v
+    ov = {}
+    if strategy:
+        ov["strategy"] = strategy
+    if exits:
+        ov["exits"] = exits
     out = apply_overrides(cfg, ov)
     out["symbol_params"] = {}
     out["_skip_param_files"] = True
@@ -267,16 +290,34 @@ def persist_best(
                 "tf": r.get("tf"),
             },
         }
+        # Preserve exit A/B knobs when present in the winning trial
+        for ek in (
+            "fvb_exit_target", "fvb_exit_enabled",
+            "bxt_exit_same_tf_enabled", "bxt_exit_ltf_enabled", "use_fixed_tp",
+        ):
+            if ek in best["params"]:
+                params[ek] = best["params"][ek]
+        # Nested exits for config merge
+        if "fvb_exit_target" in best["params"]:
+            params["exits"] = {
+                "fvb_exit": {
+                    "enabled": bool(best["params"].get("fvb_exit_enabled", True)),
+                    "target": best["params"]["fvb_exit_target"],
+                }
+            }
         path = save_symbol_params(sym, params, params_dir=params_dir)
         written.append({"symbol": sym, "path": str(path), "params": params})
         if apply_config:
-            merge_symbol_params_into_config(cfg, sym, {
+            merge_payload = {
                 "fvb_length": params["fvb_length"],
                 "fvb_band_mult": params["fvb_band_mult"],
                 "bxt_l1": params["bxt_l1"],
                 "bxt_l2": params["bxt_l2"],
                 "confirmation_bars": params["confirmation_bars"],
-            })
+            }
+            if "exits" in params:
+                merge_payload["exits"] = params["exits"]
+            merge_symbol_params_into_config(cfg, sym, merge_payload)
     if apply_config and written:
         save_config(cfg, config_path)
     return {"written": written, "applied_to_config": apply_config}

@@ -34,6 +34,15 @@ type FormState = {
   maker_pct: number;
   taker_pct: number;
   slippage_pct: number;
+  // Exit stack (both FVB targets + both BXT styles available)
+  use_fixed_tp: boolean;
+  use_trail: boolean;
+  fvb_exit_enabled: boolean;
+  fvb_exit_target: "vwap" | "inner";
+  bxt_exit_same_tf_enabled: boolean;
+  bxt_exit_ltf_enabled: boolean;
+  bxt_ltf: string;
+  partial_tp_enabled: boolean;
 };
 
 type OptimizeResult = {
@@ -58,7 +67,7 @@ type OptimizeResult = {
   error?: string;
 };
 
-const LS_KEY = "backtester:form:v3";
+const LS_KEY = "backtester:form:v4";
 
 const TF_OPTIONS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 
@@ -84,6 +93,14 @@ const DEFAULT_FORM: FormState = {
   maker_pct: 0.02,
   taker_pct: 0.06,
   slippage_pct: 0.05,
+  use_fixed_tp: true,
+  use_trail: true,
+  fvb_exit_enabled: true,
+  fvb_exit_target: "vwap",
+  bxt_exit_same_tf_enabled: true,
+  bxt_exit_ltf_enabled: true,
+  bxt_ltf: "5m",
+  partial_tp_enabled: true,
 };
 
 const LINE_COLORS = [
@@ -177,6 +194,17 @@ function formToRequest(f: FormState): BacktestRequest {
     breakeven_bars: f.breakeven_bars,
     trail_after_be: f.trail_after_be,
     max_bars: f.max_bars,
+    use_fixed_tp: f.use_fixed_tp,
+    use_trail: f.use_trail,
+    fvb_exit: {
+      enabled: f.fvb_exit_enabled,
+      target: f.fvb_exit_target,
+    },
+    bxt_exit: {
+      same_tf: { enabled: f.bxt_exit_same_tf_enabled },
+      lower_tf: { enabled: f.bxt_exit_ltf_enabled, tf: f.bxt_ltf },
+    },
+    partial_tp: { enabled: f.partial_tp_enabled, pct: 0.5, r_multiple: 1.0 },
   };
   const fees = {
     maker_pct: f.maker_pct,
@@ -196,7 +224,11 @@ function formToRequest(f: FormState): BacktestRequest {
       strategy,
       exits,
       fees,
-      execution: { leverage: f.leverage, notional_per_trade: f.notional },
+      execution: {
+        leverage: f.leverage,
+        notional_per_trade: f.notional,
+        partial_tp: { enabled: f.partial_tp_enabled, pct: 0.5, r_multiple: 1.0 },
+      },
     },
   };
 }
@@ -452,7 +484,97 @@ export default function Backtester() {
           </div>
 
           <div className="card">
-            <h3>Exits</h3>
+            <h3>Exit modes (test both)</h3>
+            <p className="muted">
+              Enable any combination. Priority: SL → partial TP → FVB revert →
+              same-TF BXT flip → lower-TF BXT flip → fixed TP → max bars.
+              Same settings drive live once applied via optimize / config.
+            </p>
+            <div className="form-grid">
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={form.use_fixed_tp}
+                  onChange={(e) => update({ use_fixed_tp: e.target.checked })}
+                />
+                Fixed ATR/% TP
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={form.use_trail}
+                  onChange={(e) => update({ use_trail: e.target.checked })}
+                />
+                Giveback trail
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={form.partial_tp_enabled}
+                  onChange={(e) => update({ partial_tp_enabled: e.target.checked })}
+                />
+                Partial TP @ 1R (50%)
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={form.fvb_exit_enabled}
+                  onChange={(e) => update({ fvb_exit_enabled: e.target.checked })}
+                />
+                FVB mean-revert exit
+              </label>
+              <div>
+                <label>FVB exit target</label>
+                <select
+                  value={form.fvb_exit_target}
+                  onChange={(e) =>
+                    update({ fvb_exit_target: e.target.value as "vwap" | "inner" })
+                  }
+                  disabled={!form.fvb_exit_enabled}
+                >
+                  <option value="vwap">VWAP center (full revert)</option>
+                  <option value="inner">Inner band (earlier)</option>
+                </select>
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={form.bxt_exit_same_tf_enabled}
+                  onChange={(e) =>
+                    update({ bxt_exit_same_tf_enabled: e.target.checked })
+                  }
+                />
+                Faster same-TF BXT flip
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={form.bxt_exit_ltf_enabled}
+                  onChange={(e) =>
+                    update({ bxt_exit_ltf_enabled: e.target.checked })
+                  }
+                />
+                Lower-TF BXT flip
+              </label>
+              <div>
+                <label>Lower TF for BXT exit</label>
+                <select
+                  value={form.bxt_ltf}
+                  onChange={(e) => update({ bxt_ltf: e.target.value })}
+                  disabled={!form.bxt_exit_ltf_enabled}
+                >
+                  {TF_OPTIONS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <h3>Exits (mechanical sizes)</h3>
             <div className="form-grid">
               <NumField
                 label="tp_atr_mult"

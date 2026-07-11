@@ -28,6 +28,30 @@ from core.timeframes import tf_to_minutes, bars_per_day
 from backtest.report import generate_report
 
 
+def _load_ltf_bars(symbol: str, sym_cfg, data_dir: str, htf_bars: List[Bar]) -> Optional[List[Bar]]:
+    """Load lower-TF candles for exit BXT when enabled. Returns None if unavailable."""
+    if not getattr(sym_cfg, "bxt_exit_ltf_enabled", False):
+        return None
+    ltf = getattr(sym_cfg, "bxt_ltf", "") or ""
+    if not ltf:
+        return None
+    try:
+        if tf_to_minutes(ltf) >= tf_to_minutes(sym_cfg.tf):
+            return None
+    except ValueError:
+        return None
+    try:
+        ltf_bars = load_candles(symbol, ltf, data_dir)
+    except FileNotFoundError:
+        return None
+    if not htf_bars or not ltf_bars:
+        return None
+    # Trim to overlapping window
+    start = htf_bars[0].ts
+    end = htf_bars[-1].ts
+    return [b for b in ltf_bars if start <= b.ts <= end]
+
+
 def parse_symbols(arg: str) -> list:
     """Parse comma-separated symbol list. Max 10 symbols."""
     syms = [s.strip().upper() for s in arg.split(",") if s.strip()]
@@ -144,6 +168,7 @@ def run_backtest_on_bars(
     cfg: dict,
     strategy_params: Optional[StrategyParams] = None,
     tf: Optional[str] = None,
+    ltf_bars: Optional[List[Bar]] = None,
 ) -> dict:
     """Run engine on a provided bar list. Used by optimizer train/test splits."""
     sym_cfg = get_symbol_config(cfg, symbol)
@@ -151,6 +176,11 @@ def run_backtest_on_bars(
         sym_cfg.tf = tf
     if strategy_params is None:
         strategy_params = get_strategy_params(cfg, symbol)
+    # Keep exit BXT lengths on params in sync with symbol config
+    strategy_params.bxt_exit_l1 = int(getattr(sym_cfg, "bxt_exit_l1", strategy_params.bxt_exit_l1))
+    strategy_params.bxt_exit_l2 = int(getattr(sym_cfg, "bxt_exit_l2", strategy_params.bxt_exit_l2))
+    strategy_params.bxt_ltf_l1 = int(getattr(sym_cfg, "bxt_ltf_l1", strategy_params.bxt_ltf_l1))
+    strategy_params.bxt_ltf_l2 = int(getattr(sym_cfg, "bxt_ltf_l2", strategy_params.bxt_ltf_l2))
     fees = get_fee_config(cfg)
 
     if len(bars) < 50:
@@ -162,7 +192,10 @@ def run_backtest_on_bars(
             "equity_curve": [],
         }
 
-    indicators = compute_all(bars, strategy_params)
+    if ltf_bars is None:
+        ltf_bars = _load_ltf_bars(symbol, sym_cfg, cfg["system"]["data_dir"], bars)
+
+    indicators = compute_all(bars, strategy_params, ltf_bars=ltf_bars)
     state = EngineState(
         symbol=symbol,
         bars=bars,
@@ -183,12 +216,18 @@ def run_backtest_on_bars(
         "trades": trade_dicts,
         "stats": stats,
         "equity_curve": _equity_curve(trade_dicts),
+        "ltf_loaded": bool(ltf_bars),
         "params": {
             "fvb_length": strategy_params.fvb_length,
             "fvb_band_mult": strategy_params.fvb_band_mult,
             "bxt_l1": strategy_params.bxt_l1,
             "bxt_l2": strategy_params.bxt_l2,
             "confirmation_bars": sym_cfg.confirmation_bars,
+            "fvb_exit_target": sym_cfg.fvb_exit_target,
+            "fvb_exit_enabled": sym_cfg.fvb_exit_enabled,
+            "bxt_exit_same_tf_enabled": sym_cfg.bxt_exit_same_tf_enabled,
+            "bxt_exit_ltf_enabled": sym_cfg.bxt_exit_ltf_enabled,
+            "use_fixed_tp": sym_cfg.use_fixed_tp,
         },
     }
 

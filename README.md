@@ -11,7 +11,13 @@ Production-ready perpetual futures trading system.
 | **Long** | Close below **outer** FVB lower band (`fvb_lower2`) | `bxt_long` crosses **above** 0 within `confirmation_bars` |
 | **Short** | Close above **outer** FVB upper band (`fvb_upper2`) | `bxt_long` crosses **below** 0 within `confirmation_bars` |
 
-Also filtered by ADX, Hurst, and RSI(2). Exits are TP/SL/breakeven trail/max-bars (not FVB/BXT).
+Also filtered by ADX, Hurst, and RSI(2).
+
+## Strategy (exits) — all selectable for backtest → live
+
+Priority (first hit wins): hard SL → partial TP @ R → **FVB revert** (`vwap` or `inner`) → **faster same-TF BXT flip** → **lower-TF BXT flip** → fixed ATR/% TP → trail / max bars.
+
+Both FVB targets and both BXT exit styles are available so you can A/B them in the backtester/optimizer, then apply winning `symbol_params` for live.
 
 ## Quick Start
 

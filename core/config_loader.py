@@ -88,6 +88,10 @@ def _strategy_dict(cfg: dict, symbol: Optional[str] = None) -> dict:
 
 def get_strategy_params(cfg: dict, symbol: Optional[str] = None) -> StrategyParams:
     s = _strategy_dict(cfg, symbol)
+    ex = cfg.get("exits") or {}
+    bxt_exit = ex.get("bxt_exit") or {}
+    same = bxt_exit.get("same_tf") or {}
+    ltf = bxt_exit.get("lower_tf") or {}
     return StrategyParams(
         fvb_length=int(s["fvb_length"]),
         fvb_band_mult=float(s["fvb_band_mult"]),
@@ -98,6 +102,10 @@ def get_strategy_params(cfg: dict, symbol: Optional[str] = None) -> StrategyPara
         bxt_ll2=int(s.get("bxt_ll2", 8)),
         hurst_window=int(s.get("hurst_window", 100)),
         adx_period=int(s.get("adx_period", 14)),
+        bxt_exit_l1=int(same.get("l1", s.get("bxt_exit_l1", 3))),
+        bxt_exit_l2=int(same.get("l2", s.get("bxt_exit_l2", 15))),
+        bxt_ltf_l1=int(ltf.get("l1", s.get("bxt_ltf_l1", 3))),
+        bxt_ltf_l2=int(ltf.get("l2", s.get("bxt_ltf_l2", 10))),
     )
 
 
@@ -107,7 +115,7 @@ def get_symbol_config(cfg: dict, symbol: str) -> SymbolConfig:
     ex_exit = dict(cfg["exits"])
     ov = get_symbol_overrides(cfg, symbol)
     if isinstance(ov.get("exits"), dict):
-        ex_exit.update(ov["exits"])
+        ex_exit = _deep_merge(ex_exit, ov["exits"])
     exec_ov = ov.get("execution") if isinstance(ov.get("execution"), dict) else {}
     leverage = int(exec_ov.get("leverage", ex["leverage"]))
     notional = float(exec_ov.get("notional_per_trade", exec_ov.get("notional", ex["notional_per_trade"])))
@@ -118,6 +126,8 @@ def get_symbol_config(cfg: dict, symbol: str) -> SymbolConfig:
         "breakeven_bars", "trail_after_be", "max_bars",
         "confirmation_bars", "adx_max", "adx_trend_max",
         "rsi2_oversold", "rsi2_overbought", "hurst_max",
+        "use_fixed_tp", "use_trail", "fvb_exit_enabled", "fvb_exit_target",
+        "bxt_exit_same_tf_enabled", "bxt_exit_ltf_enabled",
     ):
         if k in ov:
             if k in ("confirmation_bars", "adx_max", "adx_trend_max",
@@ -125,6 +135,33 @@ def get_symbol_config(cfg: dict, symbol: str) -> SymbolConfig:
                 st[k] = ov[k]
             else:
                 ex_exit[k] = ov[k]
+
+    fvb_exit = ex_exit.get("fvb_exit") or {}
+    if not isinstance(fvb_exit, dict):
+        fvb_exit = {}
+    if "fvb_exit_target" in ex_exit and "target" not in fvb_exit:
+        fvb_exit["target"] = ex_exit["fvb_exit_target"]
+    if "fvb_exit_enabled" in ex_exit and "enabled" not in fvb_exit:
+        fvb_exit["enabled"] = ex_exit["fvb_exit_enabled"]
+
+    bxt_exit = ex_exit.get("bxt_exit") or {}
+    if not isinstance(bxt_exit, dict):
+        bxt_exit = {}
+    same_tf = bxt_exit.get("same_tf") or {}
+    lower_tf = bxt_exit.get("lower_tf") or {}
+    if "bxt_exit_same_tf_enabled" in ex_exit:
+        same_tf = {**same_tf, "enabled": ex_exit["bxt_exit_same_tf_enabled"]}
+    if "bxt_exit_ltf_enabled" in ex_exit:
+        lower_tf = {**lower_tf, "enabled": ex_exit["bxt_exit_ltf_enabled"]}
+
+    # partial_tp may live under execution (legacy) or exits
+    partial = ex_exit.get("partial_tp") or ex.get("partial_tp") or {}
+    if isinstance(partial, dict):
+        p_enabled = bool(partial.get("enabled", False))
+        p_pct = float(partial.get("pct", 0.5))
+        p_r = float(partial.get("r_multiple", 1.0))
+    else:
+        p_enabled, p_pct, p_r = False, 0.5, 1.0
 
     return SymbolConfig(
         tf=st.get("tf", "15m"),
@@ -143,9 +180,22 @@ def get_symbol_config(cfg: dict, symbol: str) -> SymbolConfig:
         rsi2_oversold=float(st["rsi2_oversold"]),
         rsi2_overbought=float(st["rsi2_overbought"]),
         hurst_max=float(st.get("hurst_max", 0.85)),
-        partial_tp_enabled=bool(ex["partial_tp"]["enabled"]),
-        partial_tp_pct=float(ex["partial_tp"]["pct"]),
-        partial_tp_r=float(ex["partial_tp"]["r_multiple"]),
+        partial_tp_enabled=p_enabled,
+        partial_tp_pct=p_pct,
+        partial_tp_r=p_r,
+        use_fixed_tp=bool(ex_exit.get("use_fixed_tp", True)),
+        use_trail=bool(ex_exit.get("use_trail", True)),
+        fvb_exit_enabled=bool(fvb_exit.get("enabled", ex_exit.get("fvb_exit_enabled", True))),
+        fvb_exit_target=str(fvb_exit.get("target", ex_exit.get("fvb_exit_target", "vwap"))),
+        bxt_exit_same_tf_enabled=bool(same_tf.get("enabled", ex_exit.get("bxt_exit_same_tf_enabled", True))),
+        bxt_exit_ltf_enabled=bool(lower_tf.get("enabled", ex_exit.get("bxt_exit_ltf_enabled", True))),
+        bxt_exit_confirmation_bars=int(same_tf.get("confirmation_bars", 2)),
+        bxt_ltf_confirmation_bars=int(lower_tf.get("confirmation_bars", 2)),
+        bxt_exit_l1=int(same_tf.get("l1", 3)),
+        bxt_exit_l2=int(same_tf.get("l2", 15)),
+        bxt_ltf=str(lower_tf.get("tf", "5m")),
+        bxt_ltf_l1=int(lower_tf.get("l1", 3)),
+        bxt_ltf_l2=int(lower_tf.get("l2", 10)),
     )
 
 

@@ -44,7 +44,18 @@ class LiveRunner:
         strategy_params = get_strategy_params(self.cfg, symbol)
         tf = sym_cfg.tf
         bars = self.exchange.fetch_candles(symbol, tf, limit=500)
-        indicators = compute_all(bars, strategy_params)
+        ltf_bars = None
+        if sym_cfg.bxt_exit_ltf_enabled and sym_cfg.bxt_ltf:
+            try:
+                if tf_to_minutes(sym_cfg.bxt_ltf) < tf_to_minutes(tf):
+                    ltf_bars = self.exchange.fetch_candles(symbol, sym_cfg.bxt_ltf, limit=1500)
+            except Exception:
+                ltf_bars = None
+        strategy_params.bxt_exit_l1 = sym_cfg.bxt_exit_l1
+        strategy_params.bxt_exit_l2 = sym_cfg.bxt_exit_l2
+        strategy_params.bxt_ltf_l1 = sym_cfg.bxt_ltf_l1
+        strategy_params.bxt_ltf_l2 = sym_cfg.bxt_ltf_l2
+        indicators = compute_all(bars, strategy_params, ltf_bars=ltf_bars)
         return EngineState(
             symbol=symbol,
             bars=bars,
@@ -72,7 +83,21 @@ class LiveRunner:
                     new_bars = self.exchange.fetch_candles(symbol, state.sym_cfg.tf, limit=1)
                     if new_bars and new_bars[-1].ts > state.bars[-1].ts:
                         state.bars.append(new_bars[-1])
-                        state.indicators = compute_all(state.bars, get_strategy_params(self.cfg, symbol))
+                        sp = get_strategy_params(self.cfg, symbol)
+                        sp.bxt_exit_l1 = state.sym_cfg.bxt_exit_l1
+                        sp.bxt_exit_l2 = state.sym_cfg.bxt_exit_l2
+                        sp.bxt_ltf_l1 = state.sym_cfg.bxt_ltf_l1
+                        sp.bxt_ltf_l2 = state.sym_cfg.bxt_ltf_l2
+                        ltf_bars = None
+                        if state.sym_cfg.bxt_exit_ltf_enabled and state.sym_cfg.bxt_ltf:
+                            try:
+                                if tf_to_minutes(state.sym_cfg.bxt_ltf) < tf_to_minutes(state.sym_cfg.tf):
+                                    ltf_bars = self.exchange.fetch_candles(
+                                        symbol, state.sym_cfg.bxt_ltf, limit=1500
+                                    )
+                            except Exception:
+                                ltf_bars = None
+                        state.indicators = compute_all(state.bars, sp, ltf_bars=ltf_bars)
                         had_position = state.open_position is not None
                         before_count = len(state.closed_trades)
                         step(state, len(state.bars) - 1)

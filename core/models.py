@@ -14,6 +14,8 @@ class ExitReason(str, Enum):
     BE = "breakeven"
     TRAIL = "trail"
     OPPOSITE_BX = "opposite_bx"
+    OPPOSITE_BX_LTF = "opposite_bx_ltf"
+    FVB_REVERT = "fvb_revert"
     MAX_BARS = "max_bars"
     PARTIAL_TP = "partial_tp"
 
@@ -63,6 +65,20 @@ class SymbolConfig:
     partial_tp_enabled: bool = False
     partial_tp_pct: float = 0.5
     partial_tp_r: float = 1.0
+    # Exit stack (all optional; first hit wins after hard SL)
+    use_fixed_tp: bool = True
+    use_trail: bool = True
+    fvb_exit_enabled: bool = True
+    fvb_exit_target: str = "vwap"  # "vwap" | "inner" — both available for A/B testing
+    bxt_exit_same_tf_enabled: bool = True
+    bxt_exit_ltf_enabled: bool = True
+    bxt_exit_confirmation_bars: int = 2
+    bxt_ltf_confirmation_bars: int = 2
+    bxt_exit_l1: int = 3
+    bxt_exit_l2: int = 15
+    bxt_ltf: str = "5m"
+    bxt_ltf_l1: int = 3
+    bxt_ltf_l2: int = 10
 
 
 @dataclass
@@ -146,6 +162,11 @@ class StrategyParams:
     rsi_period: int = 14
     rsi2_period: int = 2
     atr_period: int = 14
+    # Exit BXT (faster same-TF + optional lower-TF)
+    bxt_exit_l1: int = 3
+    bxt_exit_l2: int = 15
+    bxt_ltf_l1: int = 3
+    bxt_ltf_l2: int = 10
 
 
 @dataclass
@@ -195,3 +216,7 @@ class Indicators:
     bb_upper: List[Optional[float]]
     bb_middle: List[Optional[float]]
     bb_lower: List[Optional[float]]
+    # Faster same-TF BXT for exits (bullish = positive)
+    bxt_exit_long: List[Optional[float]] = field(default_factory=list)
+    # Lower-TF BXT aligned onto entry-TF bar index
+    bxt_ltf_long: List[Optional[float]] = field(default_factory=list)

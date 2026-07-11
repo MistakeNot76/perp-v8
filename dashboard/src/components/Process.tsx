@@ -12,15 +12,21 @@ function formatTs(ts: string | number | null | undefined): string {
   }
 }
 
-export default function Cron() {
+/** Process status (replaces legacy Cron tab). */
+export default function Process() {
   const [data, setData] = useState<CronStatus | null>(null);
   const [err, setErr] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   const load = () => {
     setLoading(true);
-    api.cron()
-      .then((d) => setData(d))
+    api
+      .process()
+      .catch(() => api.cron())
+      .then((d) => {
+        setData(d);
+        setErr("");
+      })
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
   };
@@ -33,23 +39,39 @@ export default function Cron() {
 
   const jobs = data?.jobs ?? [];
   const enabled = data?.enabled;
+  const running = (data as any)?.running as boolean | undefined;
+  const mode = (data as any)?.mode as string | undefined;
 
   return (
     <div>
+      <h2 style={{ marginBottom: 8 }}>Process</h2>
+      <p className="muted" style={{ marginBottom: 12 }}>
+        Live runner status. Start with <code className="mono">python3 run_live.py</code>.
+        Kill switch is controlled from the top bar or Config.
+      </p>
+
       <div className="row" style={{ marginBottom: 8 }}>
-        <button className="secondary" onClick={load}>Refresh</button>
+        <button className="secondary" onClick={load}>
+          Refresh
+        </button>
         {loading && <span className="muted">loading…</span>}
         {err && <span className="error">{err}</span>}
+        {mode && <span className="badge gray">{mode}</span>}
+        {running !== undefined && (
+          <span className={running ? "badge green" : "badge gray"}>
+            {running ? "runner up" : "runner down"}
+          </span>
+        )}
         {enabled !== undefined && (
           <span className={enabled ? "success" : "muted"}>
-            {enabled ? "enabled" : "disabled"}
+            {enabled ? "kill switch clear" : "kill switch armed"}
           </span>
         )}
       </div>
 
       <div className="card">
         {jobs.length === 0 ? (
-          <div className="muted">No jobs configured.</div>
+          <div className="muted">No process info reported.</div>
         ) : (
           <div className="table-wrap">
             <table>
@@ -57,9 +79,8 @@ export default function Cron() {
                 <tr>
                   <th>Name</th>
                   <th>Schedule</th>
-                  <th>Last Run</th>
-                  <th>Next Run</th>
-                  <th>Last Status</th>
+                  <th>Last Seen</th>
+                  <th>Status</th>
                   <th>Message</th>
                 </tr>
               </thead>
@@ -69,9 +90,27 @@ export default function Cron() {
                     <td>{j.name}</td>
                     <td className="mono">{j.schedule}</td>
                     <td className="mono">{formatTs(j.last_run)}</td>
-                    <td className="mono">{formatTs(j.next_run)}</td>
-                    <td className={j.last_status === "ok" ? "pos" : j.last_status === "error" ? "neg" : ""}>
-                      {j.last_status ?? "—"}
+                    <td
+                      className={
+                        j.last_status === "ok" || j.last_status === "running"
+                          ? "pos"
+                          : j.last_status === "error"
+                          ? "neg"
+                          : ""
+                      }
+                    >
+                      <span
+                        className={
+                          "badge " +
+                          (j.last_status === "running" || j.last_status === "ok"
+                            ? "green"
+                            : j.last_status === "error"
+                            ? "red"
+                            : "gray")
+                        }
+                      >
+                        {j.last_status ?? "—"}
+                      </span>
                     </td>
                     <td className="muted">{j.last_message ?? ""}</td>
                   </tr>

@@ -69,6 +69,15 @@ button.danger {
   color: #fff;
   border-color: var(--red);
 }
+button.secondary {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+button.success {
+  background: rgba(63, 185, 80, 0.2);
+  color: var(--green);
+  border-color: var(--green);
+}
 
 input,
 select,
@@ -101,6 +110,7 @@ label {
   min-height: 100vh;
 }
 
+.topbar,
 .nav {
   display: flex;
   align-items: center;
@@ -111,6 +121,7 @@ label {
   position: sticky;
   top: 0;
   z-index: 10;
+  flex-wrap: wrap;
 }
 
 .brand {
@@ -120,17 +131,26 @@ label {
   letter-spacing: 0.5px;
 }
 
+.tabs {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.tab,
 .nav a {
   color: var(--text-dim);
   padding: 6px 10px;
   border-radius: 4px;
   font-size: 13px;
 }
+.tab:hover,
 .nav a:hover {
   background: var(--bg-elev-2);
   color: var(--text);
   text-decoration: none;
 }
+.tab.active,
 .nav a.active {
   background: var(--bg-elev-2);
   color: var(--accent);
@@ -144,9 +164,11 @@ label {
 .status {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   font-size: 12px;
   color: var(--text-dim);
+  margin-left: auto;
+  flex-wrap: wrap;
 }
 .status .sep {
   color: var(--border);
@@ -157,6 +179,8 @@ label {
   height: 8px;
   border-radius: 50%;
   display: inline-block;
+  margin-right: 4px;
+  vertical-align: middle;
 }
 .dot.on {
   background: var(--green);
@@ -164,6 +188,40 @@ label {
 }
 .dot.off {
   background: var(--text-dim);
+}
+
+.killswitch {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+.killswitch.danger {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+.killswitch.safe {
+  background: rgba(63, 185, 80, 0.2);
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.banner {
+  padding: 10px 24px;
+  font-size: 13px;
+}
+.banner.error {
+  background: rgba(248, 81, 73, 0.12);
+  color: var(--red);
+  border-bottom: 1px solid rgba(248, 81, 73, 0.35);
+}
+.banner.warn {
+  background: rgba(210, 153, 34, 0.12);
+  color: var(--yellow);
+  border: 1px solid rgba(210, 153, 34, 0.35);
+  border-radius: 4px;
+  padding: 10px 14px;
 }
 
 .content {
@@ -180,7 +238,8 @@ label {
   gap: 12px;
 }
 
-.panel h2 {
+.panel h2,
+h2 {
   font-size: 20px;
   font-weight: 600;
 }
@@ -189,6 +248,7 @@ label {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .card {
@@ -205,6 +265,48 @@ label {
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.stat {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.stat .label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+}
+.stat .value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pos {
+  color: var(--green);
+}
+.neg {
+  color: var(--red);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.table-wrap {
+  overflow-x: auto;
 }
 
 table {
@@ -230,8 +332,11 @@ tr:hover td {
   background: var(--bg-elev-2);
 }
 td.right,
-th.right {
+th.right,
+td.num,
+th.num {
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 td.long {
   color: var(--green);
@@ -275,6 +380,26 @@ td.pnl-neg {
   flex-direction: column;
 }
 
+.check-inline {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.check-row:last-child {
+  border-bottom: none;
+}
+
 .badge {
   display: inline-block;
   padding: 2px 8px;
@@ -301,7 +426,8 @@ td.pnl-neg {
   color: var(--text-dim);
 }
 
-.logs-viewer {
+.logs-viewer,
+.log {
   background: #000;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -316,17 +442,29 @@ td.pnl-neg {
 .log-line {
   padding: 1px 0;
 }
-.log-line.error {
+.log-line.error,
+.log-line.lv-ERROR {
   color: var(--red);
 }
-.log-line.warn {
+.log-line.warn,
+.log-line.lv-WARN {
   color: var(--yellow);
 }
-.log-line.info {
+.log-line.info,
+.log-line.lv-INFO {
   color: var(--text);
 }
-.log-line.debug {
+.log-line.debug,
+.log-line.lv-DEBUG {
   color: var(--text-dim);
+}
+
+.config-raw {
+  width: 100%;
+  min-height: 60vh;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre;
 }
 
 .muted {
@@ -335,11 +473,14 @@ td.pnl-neg {
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.success {
+  color: var(--green);
+}
 .error {
   color: var(--red);
-  padding: 12px;
+  padding: 8px 12px;
   background: rgba(248, 81, 73, 0.1);
-  border: 1px solid var(--red);
+  border: 1px solid rgba(248, 81, 73, 0.4);
   border-radius: 4px;
 }
 
@@ -354,4 +495,17 @@ td.pnl-neg {
 .chart-container {
   width: 100%;
   height: 400px;
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .status {
+    margin-left: 0;
+  }
+  .content {
+    padding: 14px;
+  }
 }

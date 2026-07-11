@@ -31,8 +31,10 @@ def validate_exit_price(exit_price: float, bar: Bar, symbol: str) -> None:
 
 
 def validate_trade_math(trade: Trade, fees: float, slippage: float) -> None:
-    """PnL = (exit - entry) * qty * leverage - fees - slippage, for LONG.
-    For SHORT: (entry - exit) * qty * leverage - fees - slippage.
+    """PnL uses notional size: gross = price_delta * qty, where qty = notional/entry.
+
+    Leverage does NOT multiply PnL (it only sets margin = notional/leverage).
+    Net = gross - fees - slippage - funding.
     """
     if trade.direction == Direction.LONG:
         gross = (trade.exit_price - trade.entry_price) * trade.qty

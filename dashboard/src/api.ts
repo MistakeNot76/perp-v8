@@ -186,27 +186,56 @@ export const api = {
   // canonical names
   state: () => getJson<AppState>("/api/state"),
   trades: () => getJson<Trade[]>("/api/trades"),
-  logFiles: () => getJson<LogFile[]>("/api/logs").catch(() => [] as LogFile[]),
+  logFiles: () =>
+    getJson<LogFile[]>("/api/logs/files").catch(() =>
+      getJson<LogFile[]>("/api/logs?list=1").catch(() => [] as LogFile[])
+    ),
   logs: (file: string, lines = 200) =>
-    getJson<LogsResponse>(`/api/logs?file=${encodeURIComponent(file)}&lines=${lines}`),
+    getJson<LogsResponse>(
+      `/api/logs?file=${encodeURIComponent(file)}&lines=${lines}`
+    ).then((r) => {
+      // Normalize legacy { content: string } → { lines: string[] }
+      if (!Array.isArray((r as LogsResponse).lines) && typeof (r as any).content === "string") {
+        const content = String((r as any).content || "");
+        const linesArr = content ? content.split("\n") : [];
+        return {
+          file: (r as any).file || file,
+          lines: linesArr,
+          total_lines: linesArr.length,
+        } as LogsResponse;
+      }
+      return r;
+    }),
   config: () => getJson<ConfigYaml>("/api/config"),
   saveConfig: (cfg: ConfigYaml) => postJson<{ ok: boolean }>("/api/config", cfg),
-  killSwitch: (action: "on" | "off" | { on: boolean; reason?: string }) =>
-    postJson<{ ok: boolean; killswitch?: boolean }>("/api/killswitch", action),
+  killSwitch: (action: "on" | "off" | { on: boolean; reason?: string }) => {
+    const body =
+      typeof action === "string" ? { on: action === "on" } : action;
+    return postJson<{ ok: boolean; kill_switch?: boolean; killswitch?: boolean }>(
+      "/api/killswitch",
+      body
+    );
+  },
   backtest: (req: BacktestRequest) => postJson<BacktestResponse>("/api/backtest", req),
   optimize: (req: Record<string, unknown>) =>
     postJson<Record<string, unknown>>("/api/optimize", req),
+  applyParams: (symbol: string) =>
+    postJson<{ ok: boolean }>(`/api/params/${encodeURIComponent(symbol)}/apply`, {}),
   validator: () => getJson<ValidatorResponse>("/api/validator"),
-  cron: () => getJson<CronStatus>("/api/cron"),
+  cron: () => getJson<CronStatus>("/api/process").catch(() => getJson<CronStatus>("/api/cron")),
+  process: () => getJson<CronStatus>("/api/process"),
+  dataHealth: () =>
+    getJson<{ missing: boolean; files: unknown[]; hint: string }>("/api/data/health"),
 
   // legacy aliases
   getState: () => getJson<AppState>("/api/state"),
   getTrades: (limit = 500) =>
     getJson<Trade[]>(`/api/trades?limit=${limit}`),
   getConfig: () => getJson<ConfigYaml>("/api/config"),
-  getCron: () => getJson<CronStatus>("/api/cron"),
+  getCron: () => getJson<CronStatus>("/api/process").catch(() => getJson<CronStatus>("/api/cron")),
   getValidator: () => getJson<ValidatorResponse>("/api/validator"),
-  listLogs: () => getJson<LogFile[]>("/api/logs").catch(() => [] as LogFile[]),
+  listLogs: () =>
+    getJson<LogFile[]>("/api/logs/files").catch(() => [] as LogFile[]),
   tailLog: (name: string, lines = 200) =>
     getJson<LogsResponse>(`/api/logs?file=${encodeURIComponent(name)}&lines=${lines}`),
   runBacktest: (req: BacktestRequest) => postJson<BacktestResponse>("/api/backtest", req),
@@ -269,7 +298,7 @@ export function useWebSocket<T = WSMessage>(onMessage?: (data: T) => void) {
     };
     connect();
     return () => {
-      alive = true;
+      alive = false;
       try {
         ws?.close();
       } catch {
@@ -295,7 +324,7 @@ export function connectWS(
   const open = () => {
     if (stopped) return;
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}//${window.location.host}/ws`;
+    const url = `${proto}://${window.location.host}/ws`;
     try {
       ws = new WebSocket(url);
     } catch {

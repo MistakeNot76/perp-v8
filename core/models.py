@@ -171,24 +171,34 @@ class StrategyParams:
 
 @dataclass
 class FeeConfig:
+    """Trading cost model.
+
+    PnL uses *notional* position size (qty = notional / entry). Leverage only
+    determines margin required (notional / leverage); it does **not** multiply
+    gross PnL. Market fills use taker fees; pass is_maker=True for limit fills.
+    funding_pct_per_8h is a flat estimate (not signed exchange funding history).
+    """
     maker_pct: float = 0.02
     taker_pct: float = 0.06
     slippage_pct: float = 0.05
     funding_pct_per_8h: float = 0.01
 
-    def entry_cost(self, notional: float) -> float:
-        """Taker fee on entry only (slippage is separate)."""
-        return notional * self.taker_pct / 100
+    def entry_cost(self, notional: float, is_maker: bool = False) -> float:
+        """Fee on entry only (slippage is separate). Market → taker; limit → maker."""
+        rate = self.maker_pct if is_maker else self.taker_pct
+        return notional * rate / 100
 
-    def exit_cost(self, notional: float) -> float:
-        """Taker fee on exit only (slippage is separate)."""
-        return notional * self.taker_pct / 100
+    def exit_cost(self, notional: float, is_maker: bool = False) -> float:
+        """Fee on exit only (slippage is separate). Market → taker; limit → maker."""
+        rate = self.maker_pct if is_maker else self.taker_pct
+        return notional * rate / 100
 
     def round_trip_slippage(self, notional: float) -> float:
-        """Slippage on both entry and exit fills."""
+        """Flat slippage on both entry and exit fills (not order-book based)."""
         return 2 * notional * self.slippage_pct / 100
 
     def funding_cost(self, notional: float, bars: int, bar_minutes: int) -> float:
+        """Constant % funding estimate per 8h held (unsigned; not live funding rates)."""
         periods_8h = (bars * bar_minutes) / 480
         return notional * self.funding_pct_per_8h * periods_8h / 100
 

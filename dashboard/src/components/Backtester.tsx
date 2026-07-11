@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -251,6 +251,26 @@ export default function Backtester() {
   const [applyBest, setApplyBest] = useState(true);
   const [err, setErr] = useState<string>("");
   const [mode, setMode] = useState<"backtest" | "optimize">("backtest");
+  const [dataHint, setDataHint] = useState<string>("");
+  const [applyMsg, setApplyMsg] = useState<string>("");
+
+  useEffect(() => {
+    api
+      .dataHealth()
+      .then((h) => {
+        if (h.missing) {
+          setDataHint(`No candle history found. Fetch with: ${h.hint}`);
+        } else {
+          const stale = (h.files as Array<{ stale?: boolean }>).filter((f) => f.stale).length;
+          if (stale > 0) {
+            setDataHint(`${stale} history file(s) older than 48h. Refresh: ${h.hint}`);
+          } else {
+            setDataHint("");
+          }
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const update = (patch: Partial<FormState>) => {
     const next = { ...form, ...patch };
@@ -356,6 +376,7 @@ export default function Backtester() {
         Entries: close outside outer FVB band (×2) + bullish/bearish BXT zero-cross.
         Optimize finds per-perp FVB/BXT settings via train/test grid search.
       </p>
+      {dataHint && <div className="banner warn" style={{ marginBottom: 12 }}>{dataHint}</div>}
 
       <div className="row" style={{ marginBottom: 12, gap: 8 }}>
         <button
@@ -373,7 +394,7 @@ export default function Backtester() {
       </div>
 
       <div className="card">
-        <h3>Symbols & timeframe</h3>
+        <h3>What to run</h3>
         <div className="form-row">
           <div style={{ flex: 2 }}>
             <label>comma-separated symbols (max 10, must end in USDT)</label>
@@ -421,70 +442,70 @@ export default function Backtester() {
       {mode === "backtest" && (
         <>
           <div className="card">
-            <h3>Strategy (FVB + BXT)</h3>
+            <h3>Strategy</h3>
             <div className="form-grid">
               <NumField
-                label="fvb_length"
+                label="FVB length"
                 value={form.fvb_length}
                 min={1}
                 onChange={(v) => update({ fvb_length: v })}
-                hint="Band std / VWAP smooth window"
+                hint="VWAP / band lookback window"
               />
               <NumField
-                label="fvb_band_mult"
+                label="FVB band multiplier"
                 value={form.fvb_band_mult}
                 step={0.05}
                 min={0.1}
                 onChange={(v) => update({ fvb_band_mult: v })}
-                hint="Inner=1×mult; entry uses outer=2×mult"
+                hint="Inner=1×; entries use outer=2×"
               />
               <NumField
-                label="bxt_l1 (fast)"
+                label="BXT fast (l1)"
                 value={form.bxt_l1}
                 min={1}
                 onChange={(v) => update({ bxt_l1: v })}
+                hint="Fast SMA of typical price"
               />
               <NumField
-                label="bxt_l2 (slow)"
+                label="BXT slow (l2)"
                 value={form.bxt_l2}
                 min={2}
                 onChange={(v) => update({ bxt_l2: v })}
+                hint="Slow SMA of typical price"
               />
               <NumField
-                label="confirmation_bars"
+                label="Confirmation bars"
                 value={form.confirmation_bars}
                 min={1}
                 onChange={(v) => update({ confirmation_bars: v })}
-                hint="BXT zero-cross lookback"
+                hint="Bars to catch a BXT zero-cross"
               />
               <NumField
-                label="adx_max"
+                label="ADX max (filter)"
                 value={form.adx_max}
                 min={0}
                 onChange={(v) => update({ adx_max: v })}
+                hint="Skip entries when trend is too strong"
               />
               <NumField
-                label="rsi2_oversold"
+                label="RSI(2) oversold"
                 value={form.rsi2_oversold}
                 min={0}
                 max={100}
                 onChange={(v) => update({ rsi2_oversold: v })}
               />
               <NumField
-                label="rsi2_overbought"
+                label="RSI(2) overbought"
                 value={form.rsi2_overbought}
                 min={0}
                 max={100}
                 onChange={(v) => update({ rsi2_overbought: v })}
               />
             </div>
-            <p className="muted" style={{ marginTop: 8 }}>
-              Unused knobs (not wired): bxt_l3, bxt_ll1, bxt_ll2, adx_trend_max.
-            </p>
           </div>
 
           <div className="card">
-            <h3>Exit modes (test both)</h3>
+            <h3>Exits</h3>
             <p className="muted">
               Enable any combination. Priority: SL → partial TP → FVB revert →
               same-TF BXT flip → lower-TF BXT flip → fixed TP → max bars.
@@ -574,34 +595,34 @@ export default function Backtester() {
           </div>
 
           <div className="card">
-            <h3>Exits (mechanical sizes)</h3>
+            <h3>Exit sizes</h3>
             <div className="form-grid">
               <NumField
-                label="tp_atr_mult"
+                label="TP ATR multiple"
                 value={form.tp_atr_mult}
                 step={0.1}
                 onChange={(v) => update({ tp_atr_mult: v })}
               />
               <NumField
-                label="sl_atr_mult"
+                label="SL ATR multiple"
                 value={form.sl_atr_mult}
                 step={0.1}
                 onChange={(v) => update({ sl_atr_mult: v })}
               />
               <NumField
-                label="breakeven_bars"
+                label="Breakeven after N bars"
                 value={form.breakeven_bars}
                 min={0}
                 onChange={(v) => update({ breakeven_bars: v })}
               />
               <NumField
-                label="trail_after_be"
+                label="Trail giveback (ATR)"
                 value={form.trail_after_be}
                 step={0.1}
                 onChange={(v) => update({ trail_after_be: v })}
               />
               <NumField
-                label="max_bars"
+                label="Max bars held"
                 value={form.max_bars}
                 min={1}
                 onChange={(v) => update({ max_bars: v })}
@@ -610,34 +631,35 @@ export default function Backtester() {
           </div>
 
           <div className="card">
-            <h3>Execution</h3>
+            <h3>Costs</h3>
             <div className="form-grid">
               <NumField
-                label="leverage (x)"
+                label="Leverage (x, margin only)"
                 value={form.leverage}
                 min={1}
                 onChange={(v) => update({ leverage: v })}
+                hint="Does not multiply PnL — sets margin = notional ÷ lev"
               />
               <NumField
-                label="notional (USD)"
+                label="Notional (USD)"
                 value={form.notional}
                 min={1}
                 onChange={(v) => update({ notional: v })}
               />
               <NumField
-                label="maker_pct"
+                label="Maker fee %"
                 value={form.maker_pct}
                 step={0.001}
                 onChange={(v) => update({ maker_pct: v })}
               />
               <NumField
-                label="taker_pct"
+                label="Taker fee % (market)"
                 value={form.taker_pct}
                 step={0.001}
                 onChange={(v) => update({ taker_pct: v })}
               />
               <NumField
-                label="slippage_pct"
+                label="Slippage % / side"
                 value={form.slippage_pct}
                 step={0.001}
                 onChange={(v) => update({ slippage_pct: v })}
@@ -764,6 +786,27 @@ export default function Backtester() {
               wrote: {optResult.persisted.written.map((w) => w.path).join(", ")}
             </p>
           )}
+          {applyMsg && <p className="success" style={{ marginTop: 8 }}>{applyMsg}</p>}
+          <div className="row" style={{ marginTop: 10, gap: 8 }}>
+            {(optResult.results ?? [])
+              .filter((r) => r.best?.params)
+              .map((r) => (
+                <button
+                  key={`apply-${r.symbol}`}
+                  className="secondary"
+                  onClick={async () => {
+                    try {
+                      await api.applyParams(r.symbol);
+                      setApplyMsg(`Applied ${r.symbol} params into config.yaml`);
+                    } catch (e) {
+                      setErr(e instanceof Error ? e.message : String(e));
+                    }
+                  }}
+                >
+                  Apply {r.symbol} to config
+                </button>
+              ))}
+          </div>
         </div>
       )}
 

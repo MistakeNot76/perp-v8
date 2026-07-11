@@ -6,7 +6,7 @@ import Trades from "./components/Trades";
 import Backtester from "./components/Backtester";
 import Config from "./components/Config";
 import Logs from "./components/Logs";
-import Cron from "./components/Cron";
+import Process from "./components/Process";
 import Validator from "./components/Validator";
 import "./styles.css";
 
@@ -16,22 +16,30 @@ const TABS: { to: string; label: string; end?: boolean }[] = [
   { to: "/backtester", label: "Backtester" },
   { to: "/config", label: "Config" },
   { to: "/logs", label: "Logs" },
-  { to: "/cron", label: "Cron" },
+  { to: "/process", label: "Process" },
   { to: "/validator", label: "Validator" },
 ];
 
 export default function App() {
   const [state, setState] = useState<AppState | null>(null);
+  const [stateErr, setStateErr] = useState<string>("");
   const [ksBusy, setKsBusy] = useState(false);
 
-  // initial fetch
   useEffect(() => {
     let alive = true;
-    api.state()
-      .then((s) => alive && setState(s))
-      .catch(() => {});
+    api
+      .state()
+      .then((s) => {
+        if (!alive) return;
+        setState(s);
+        setStateErr("");
+      })
+      .catch((e) => alive && setStateErr(String(e)));
     const onFocus = () =>
-      api.state().then((s) => alive && setState(s)).catch(() => {});
+      api
+        .state()
+        .then((s) => alive && setState(s))
+        .catch((e) => alive && setStateErr(String(e)));
     window.addEventListener("focus", onFocus);
     return () => {
       alive = false;
@@ -39,11 +47,16 @@ export default function App() {
     };
   }, []);
 
-  // live updates over websocket
   const { connected } = useWebSocket<WSMessage>((msg) => {
     if (msg.type === "state" && msg.data) {
       setState(msg.data as AppState);
-    } else if (msg.type === "fills" || msg.type === "fills_update" || msg.type === "position" || msg.type === "positions") {
+      setStateErr("");
+    } else if (
+      msg.type === "fills" ||
+      msg.type === "fills_update" ||
+      msg.type === "position" ||
+      msg.type === "positions"
+    ) {
       api.state().then(setState).catch(() => {});
     } else if (msg.type === "killswitch" && msg.data) {
       setState((prev) => (prev ? { ...prev, ...(msg.data as object) } : prev));
@@ -54,16 +67,24 @@ export default function App() {
   const upnl = (state?.upnl as number | undefined) ?? null;
   const killswitch = Boolean(state?.killswitch ?? state?.kill_switch);
   const running = Boolean(state?.running);
+  const mode = (state?.mode as string | undefined) ?? "—";
 
   const toggleKillswitch = async () => {
     if (ksBusy) return;
+    const next = killswitch ? "resume" : "halt";
+    const ok = window.confirm(
+      next === "halt"
+        ? "Arm kill switch? The live runner will stop opening/managing new risk."
+        : "Resume trading? This clears the kill switch in config.yaml."
+    );
+    if (!ok) return;
     setKsBusy(true);
     try {
       await api.killSwitch(killswitch ? "off" : "on");
       const s = await api.state();
       setState(s);
     } catch (e) {
-      console.error("killswitch failed", e);
+      setStateErr(String(e));
     } finally {
       setKsBusy(false);
     }
@@ -87,17 +108,26 @@ export default function App() {
             ))}
           </nav>
           <div className="status">
-            <span>
+            <span title="WebSocket">
               <span className={"dot " + (connected ? "on" : "off")} />
-              {connected ? "ws" : "off"}
+              {connected ? "Connected" : "Offline"}
             </span>
+            <span className="sep">·</span>
+            <span className="mono">{mode}</span>
+            <span className="sep">·</span>
             <span>
               <span className={"dot " + (running && !killswitch ? "on" : "off")} />
-              {killswitch ? "KILLED" : running ? "running" : "stopped"}
+              {killswitch ? "Killed" : running ? "Running" : "Stopped"}
             </span>
-            {equity !== null && <span>eq {fmtNum(equity, 2)}</span>}
+            {equity !== null && (
+              <span>
+                Equity <strong className="mono">{fmtNum(equity, 2)}</strong>
+              </span>
+            )}
             {upnl !== null && (
-              <span className={upnl >= 0 ? "pos" : "neg"}>uPNL {fmtNum(upnl, 2)}</span>
+              <span className={upnl >= 0 ? "pos" : "neg"}>
+                Unrealized <strong className="mono">{fmtNum(upnl, 2)}</strong>
+              </span>
             )}
             <button
               className={"killswitch " + (killswitch ? "safe" : "danger")}
@@ -105,10 +135,16 @@ export default function App() {
               disabled={ksBusy}
               title={killswitch ? "Resume trading" : "Halt all trading"}
             >
-              {ksBusy ? "..." : killswitch ? "RESUME" : "KILL"}
+              {ksBusy ? "…" : killswitch ? "Resume" : "Kill"}
             </button>
           </div>
         </div>
+
+        {stateErr && (
+          <div className="banner error">
+            Cannot reach API: {stateErr}. Is the dashboard server running?
+          </div>
+        )}
 
         <div className="content">
           <Routes>
@@ -117,7 +153,8 @@ export default function App() {
             <Route path="/backtester" element={<Backtester />} />
             <Route path="/config" element={<Config />} />
             <Route path="/logs" element={<Logs />} />
-            <Route path="/cron" element={<Cron />} />
+            <Route path="/process" element={<Process />} />
+            <Route path="/cron" element={<Process />} />
             <Route path="/validator" element={<Validator />} />
             <Route path="*" element={<Positions />} />
           </Routes>

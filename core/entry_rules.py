@@ -7,7 +7,6 @@ from typing import List, Optional
 from dataclasses import dataclass
 
 from core.models import Indicators, Direction
-from core.exit_rules import compute_tp_sl
 
 
 @dataclass
@@ -70,7 +69,7 @@ def check_entry(
         return None
     if adx_v > sym_cfg.adx_max:
         return None
-    if hurst_v is not None and hurst_v > 0.6:
+    if hurst_v is not None and hurst_v > sym_cfg.hurst_max:
         return None
 
     if close < fvb_l1:

@@ -19,7 +19,7 @@ class EngineState:
     indicators: Indicators
     sym_cfg: SymbolConfig
     fees: FeeConfig
-    bar_minutes: int = 5
+    bar_minutes: int = 15  # default; backtest runner overrides from tf
     open_position: Optional[Position] = None
     closed_trades: List[Trade] = field(default_factory=list)
     current_bar_idx: int = 0
@@ -33,7 +33,8 @@ def open_position(
     """Open a new position at the signal bar's close."""
     bar = state.bars[signal.bar_idx]
     entry_price = bar.close
-    tp, sl = compute_tp_sl(signal.direction, entry_price, 0, state.sym_cfg)
+    atr = state.indicators.atr[signal.bar_idx] if signal.bar_idx < len(state.indicators.atr) else None
+    tp, sl = compute_tp_sl(signal.direction, entry_price, atr, state.sym_cfg)
 
     if signal.direction == Direction.LONG:
         high_water = entry_price
@@ -80,8 +81,9 @@ def close_position(
         gross = (pos.entry_price - exit_price) * pos.size
 
     fees = state.fees.entry_cost(pos.notional) + state.fees.exit_cost(pos.notional)
+    slippage = state.fees.slippage_pct * pos.notional / 100
     funding = state.fees.funding_cost(pos.notional, pos.bars_held, state.bar_minutes)
-    net = gross - fees - funding
+    net = gross - fees - slippage - funding
 
     trade = Trade(
         symbol=pos.symbol,

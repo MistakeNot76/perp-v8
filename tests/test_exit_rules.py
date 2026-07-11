@@ -148,6 +148,54 @@ def test_trail_anchored_to_high_water():
     assert pos.current_sl <= pos.high_water
 
 
+def test_compute_tp_sl_with_atr_long():
+    """ATR-driven TP/SL for a long position."""
+    sym = make_sym_cfg(min_tp_pct=2.0, min_sl_pct=1.0, tp_atr_mult=2.0, sl_atr_mult=1.5)
+    atr = 1.5  # $1.50 ATR on a $100 asset
+    tp, sl = compute_tp_sl(Direction.LONG, 100.0, atr, sym)
+    # tp_dist = max(100*0.02, 1.5*2.0) = max(2.0, 3.0) = 3.0 → tp=103.0
+    # sl_dist = max(100*0.01, 1.5*1.5) = max(1.0, 2.25) = 2.25 → sl=97.75
+    assert tp == pytest.approx(103.0)
+    assert sl == pytest.approx(97.75)
+
+
+def test_compute_tp_sl_with_atr_short():
+    """ATR-driven TP/SL for a short position."""
+    sym = make_sym_cfg(min_tp_pct=2.0, min_sl_pct=1.0, tp_atr_mult=2.0, sl_atr_mult=1.5)
+    atr = 1.5
+    tp, sl = compute_tp_sl(Direction.SHORT, 100.0, atr, sym)
+    # tp = 100 - 3.0 = 97.0, sl = 100 + 2.25 = 102.25
+    assert tp == pytest.approx(97.0)
+    assert sl == pytest.approx(102.25)
+
+
+def test_compute_tp_sl_floor_wins_over_atr():
+    """When ATR is tiny, the percentage floor should win."""
+    sym = make_sym_cfg(min_tp_pct=5.0, min_sl_pct=3.0, tp_atr_mult=2.0, sl_atr_mult=1.5)
+    atr = 0.1  # tiny ATR
+    tp, sl = compute_tp_sl(Direction.LONG, 100.0, atr, sym)
+    # tp_dist = max(100*0.05, 0.1*2.0) = max(5.0, 0.2) = 5.0 → tp=105.0
+    # sl_dist = max(100*0.03, 0.1*1.5) = max(3.0, 0.15) = 3.0 → sl=97.0
+    assert tp == pytest.approx(105.0)
+    assert sl == pytest.approx(97.0)
+
+
+def test_compute_tp_sl_atr_none_fallback():
+    """When ATR is None (warmup), fall back to percentage-only."""
+    sym = make_sym_cfg(min_tp_pct=2.0, min_sl_pct=1.0)
+    tp, sl = compute_tp_sl(Direction.LONG, 100.0, None, sym)
+    assert tp == pytest.approx(102.0)
+    assert sl == pytest.approx(99.0)
+
+
+def test_compute_tp_sl_atr_zero_fallback():
+    """When ATR is zero, fall back to percentage-only."""
+    sym = make_sym_cfg(min_tp_pct=2.0, min_sl_pct=1.0)
+    tp, sl = compute_tp_sl(Direction.LONG, 100.0, 0.0, sym)
+    assert tp == pytest.approx(102.0)
+    assert sl == pytest.approx(99.0)
+
+
 def test_validator_rejects_phantom_price():
     bar = make_bar(high=100, low=90)
     with pytest.raises(ValidationError):

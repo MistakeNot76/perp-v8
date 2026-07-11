@@ -31,6 +31,18 @@ def _sma(values: List[float], period: int) -> List[Optional[float]]:
     return out
 
 
+def _ema(values: List[float], period: int) -> List[Optional[float]]:
+    """Exponential moving average. Seed with SMA, then iterate."""
+    out: List[Optional[float]] = [None] * len(values)
+    if len(values) < period:
+        return out
+    out[period - 1] = sum(values[:period]) / period
+    alpha = 2.0 / (period + 1)
+    for i in range(period, len(values)):
+        out[i] = values[i] * alpha + (out[i - 1] or 0.0) * (1 - alpha)
+    return out
+
+
 def atr(bars: List[Bar], period: int = 14) -> List[Optional[float]]:
     if not bars:
         return []
@@ -55,14 +67,18 @@ def adx(bars: List[Bar], period: int = 14) -> List[Optional[float]]:
         h, l, pc = bars[i].high, bars[i].low, bars[i - 1].close
         tr_list.append(max(h - l, abs(h - pc), abs(l - pc)))
 
+    # Compute RMAs ONCE — O(n), not O(n²) inside the loop
     atr_s = _rma(tr_list, period)
+    plus_dm_rma = _rma(plus_dm, period)
+    minus_dm_rma = _rma(minus_dm, period)
+
     plus_di: List[Optional[float]] = [None] * len(bars)
     minus_di: List[Optional[float]] = [None] * len(bars)
     dx: List[Optional[float]] = [None] * len(bars)
     for i in range(period, len(bars)):
         if atr_s[i] and atr_s[i] > 0:
-            sp = _rma(plus_dm, period)[i] or 0.0
-            sm = _rma(minus_dm, period)[i] or 0.0
+            sp = plus_dm_rma[i] or 0.0
+            sm = minus_dm_rma[i] or 0.0
             plus_di[i] = 100.0 * sp / atr_s[i]
             minus_di[i] = 100.0 * sm / atr_s[i]
             if plus_di[i] + minus_di[i] > 0:
@@ -91,28 +107,96 @@ def rsi(closes: List[float], period: int = 14) -> List[Optional[float]]:
     return out
 
 
-def fvb(bars: List[Bar], length: int = 8) -> List[Optional[float]]:
-    """Fair Value Bubble: RMA of (high-low) range. FVB band = fvb * mult."""
+def _vwap(bars: List[Bar]) -> List[Optional[float]]:
+    """VWAP with daily reset (UTC midnight). Ported from V7.5."""
     if not bars:
         return []
-    ranges = [b.high - b.low for b in bars]
-    return _rma(ranges, length)
+    vwap_series: List[Optional[float]] = []
+    cum_vp = 0.0
+    cum_v = 0.0
+    last_day = None
+    for b in bars:
+        typ = (b.high + b.low + b.close) / 3.0
+        vol = b.volume
+        day = b.ts // 86400000
+        if day != last_day:
+            cum_vp = 0.0
+            cum_v = 0.0
+            last_day = day
+        cum_vp += typ * vol
+        cum_v += vol
+        vwap_series.append(cum_vp / cum_v if cum_v > 0 else typ)
+    return vwap_series
 
 
-def fvb_bands(fvb_vals: List[Optional[float]], closes: List[float], mult: float = 1.0):
-    """Compute upper/lower bands around price using FVB."""
+def fvb(bars: List[Bar], length: int = 20) -> List[Optional[float]]:
+    """Fair Value Bubble: VWAP series with daily reset.
+    The returned series is the VWAP — used by fvb_bands() to compute
+    multiplicative bands that price can actually penetrate.
+    """
+    return _vwap(bars)
+
+
+def fvb_bands(
+    fvb_vals: List[Optional[float]],
+    closes: List[float],
+    mult: float = 1.5,
+    bars: Optional[List[Bar]] = None,
+    period: int = 20,
+    smoothing: str = "SMA",
+) -> tuple:
+    """VWAP ± σ multiplicative bands. Ported from V7.5 calc_vwap_with_bands.
+
+    lower1 = smoothed_vwap * (1 - mult * rolling_std)
+    upper1 = smoothed_vwap * (1 + mult * rolling_std)
+    lower2/upper2 use 2*mult.
+
+    rolling_std = std of (close - vwap) / vwap over `period` bars.
+    """
     n = len(closes)
     lower1: List[Optional[float]] = [None] * n
     lower2: List[Optional[float]] = [None] * n
     upper1: List[Optional[float]] = [None] * n
     upper2: List[Optional[float]] = [None] * n
+
+    if n < period or not fvb_vals:
+        return lower1, lower2, upper1, upper2
+
+    # Deviations from VWAP (as fraction of VWAP)
+    devs: List[float] = [0.0] * n
     for i in range(n):
-        if fvb_vals[i] is not None:
-            offset = fvb_vals[i] * mult
-            lower1[i] = closes[i] - offset
-            lower2[i] = closes[i] - offset * 2
-            upper1[i] = closes[i] + offset
-            upper2[i] = closes[i] + offset * 2
+        v = fvb_vals[i]
+        if v is not None and v > 0:
+            devs[i] = (closes[i] - v) / v
+        else:
+            devs[i] = 0.0
+
+    # Rolling standard deviation of deviations
+    rolling_std: List[Optional[float]] = [None] * n
+    for i in range(period - 1, n):
+        window = devs[i - period + 1: i + 1]
+        mean_d = sum(window) / period
+        var_d = sum((d - mean_d) ** 2 for d in window) / period
+        rolling_std[i] = math.sqrt(var_d)
+
+    # Smooth the VWAP series
+    vwap_clean = [v if v is not None else 0.0 for v in fvb_vals]
+    if smoothing == "EMA":
+        smoothed = _ema(vwap_clean, period)
+    elif smoothing == "RMA":
+        smoothed = _rma(vwap_clean, period)
+    else:  # SMA (default, matches V7.5)
+        smoothed = _sma(vwap_clean, period)
+
+    for i in range(n):
+        sv = smoothed[i] if smoothed[i] is not None else fvb_vals[i]
+        if sv is not None and sv > 0 and rolling_std[i] is not None:
+            rs = rolling_std[i]
+            lower1[i] = sv * (1 - mult * rs)
+            lower2[i] = sv * (1 - 2 * mult * rs)
+            upper1[i] = sv * (1 + mult * rs)
+            upper2[i] = sv * (1 + 2 * mult * rs)
+
     return lower1, lower2, upper1, upper2
 
 
@@ -183,7 +267,7 @@ def compute_all(bars: List[Bar], params) -> Indicators:
     rsi14 = rsi(closes, 14)
     rsi2 = rsi(closes, 2)
     fvb_vals = fvb(bars, params.fvb_length)
-    l1, l2, u1, u2 = fvb_bands(fvb_vals, closes, params.fvb_band_mult)
+    l1, l2, u1, u2 = fvb_bands(fvb_vals, closes, params.fvb_band_mult, period=params.fvb_length, smoothing="SMA")
     bx_long, bx_short = bxt(bars, params.bxt_l1, params.bxt_l2, params.bxt_l3)
     hurst_vals = hurst(bars, params.hurst_window)
     bb_u, bb_m, bb_l = bollinger(closes)

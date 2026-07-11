@@ -22,19 +22,29 @@ class ExitDecision:
 def compute_tp_sl(
     direction: Direction,
     entry_price: float,
-    bars_held: int,
+    atr: Optional[float],
     sym_cfg,
 ) -> tuple:
-    """Initial TP/SL at entry time. TP/SL expressed as price levels."""
-    tp_pct = max(sym_cfg.min_tp_pct, sym_cfg.tp_atr_mult * 0.5) / 100
-    sl_pct = max(sym_cfg.min_sl_pct, sym_cfg.sl_atr_mult * 0.5) / 100
+    """Initial TP/SL at entry time. ATR-driven with min percentage floors.
+
+    tp_distance = max(entry * min_tp_pct/100, atr * tp_atr_mult)
+    sl_distance = max(entry * min_sl_pct/100, atr * sl_atr_mult)
+
+    If ATR is None or zero (warmup), falls back to percentage-only.
+    """
+    if atr is not None and atr > 0:
+        tp_dist = max(entry_price * sym_cfg.min_tp_pct / 100, atr * sym_cfg.tp_atr_mult)
+        sl_dist = max(entry_price * sym_cfg.min_sl_pct / 100, atr * sym_cfg.sl_atr_mult)
+    else:
+        tp_dist = entry_price * sym_cfg.min_tp_pct / 100
+        sl_dist = entry_price * sym_cfg.min_sl_pct / 100
 
     if direction == Direction.LONG:
-        tp = entry_price * (1 + tp_pct)
-        sl = entry_price * (1 - sl_pct)
+        tp = entry_price + tp_dist
+        sl = entry_price - sl_dist
     else:
-        tp = entry_price * (1 - tp_pct)
-        sl = entry_price * (1 + sl_pct)
+        tp = entry_price - tp_dist
+        sl = entry_price + sl_dist
     return tp, sl
 
 

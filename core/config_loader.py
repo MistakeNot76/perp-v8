@@ -48,7 +48,7 @@ def get_symbol_config(cfg: dict, symbol: str) -> SymbolConfig:
     st = cfg["strategy"]
     ex_exit = cfg["exits"]
     return SymbolConfig(
-        tf="5m",
+        tf=st.get("tf", "15m"),
         leverage=ex["leverage"],
         notional=ex["notional_per_trade"],
         min_tp_pct=ex_exit["min_tp_pct"],
@@ -63,6 +63,7 @@ def get_symbol_config(cfg: dict, symbol: str) -> SymbolConfig:
         adx_trend_max=st["adx_trend_max"],
         rsi2_oversold=st["rsi2_oversold"],
         rsi2_overbought=st["rsi2_overbought"],
+        hurst_max=st.get("hurst_max", 0.85),
         partial_tp_enabled=ex["partial_tp"]["enabled"],
         partial_tp_pct=ex["partial_tp"]["pct"],
         partial_tp_r=ex["partial_tp"]["r_multiple"],

@@ -59,17 +59,10 @@ class SymbolConfig:
     adx_trend_max: float
     rsi2_oversold: float
     rsi2_overbought: float
+    hurst_max: float = 0.85
     partial_tp_enabled: bool = False
     partial_tp_pct: float = 0.5
     partial_tp_r: float = 1.0
-
-    @property
-    def tp_dist_pct(self) -> float:
-        return max(self.min_tp_pct, self.tp_atr_mult * 0.5)
-
-    @property
-    def sl_dist_pct(self) -> float:
-        return max(self.min_sl_pct, self.sl_atr_mult * 0.5)
 
 
 @dataclass
@@ -161,10 +154,10 @@ class FeeConfig:
     funding_pct_per_8h: float = 0.01
 
     def entry_cost(self, notional: float) -> float:
-        return notional * (self.taker_pct + self.slippage_pct) / 100
+        return notional * self.taker_pct / 100
 
     def exit_cost(self, notional: float) -> float:
-        return notional * (self.taker_pct + self.slippage_pct) / 100
+        return notional * self.taker_pct / 100
 
     def funding_cost(self, notional: float, bars: int, bar_minutes: int) -> float:
         periods_8h = (bars * bar_minutes) / 480

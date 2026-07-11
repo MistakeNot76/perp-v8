@@ -208,7 +208,14 @@ def fvb_bands(
 
 
 def bxt(bars: List[Bar], l1: int = 5, l2: int = 30, l3: int = 5) -> tuple:
-    """Bar Strength Index Trend: SMA diff of two MAs of typical price."""
+    """Bar Strength Index Trend: SMA diff of two MAs of typical price.
+
+    ``bxt_long`` = SMA(tp, l1) - SMA(tp, l2). Positive = bullish (fast above slow).
+    ``bxt_short`` = -bxt_long (mirror series; kept for compatibility).
+
+    ``l3`` is unused — retained for call-site / config compatibility only.
+    """
+    _ = l3
     if not bars:
         return [], []
     tp = [(b.high + b.low + b.close) / 3 for b in bars]
@@ -262,8 +269,36 @@ def bollinger(closes: List[float], period: int = 20, mult: float = 2.0):
     return upper, middle, lower
 
 
-def compute_all(bars: List[Bar], params) -> Indicators:
-    """Compute all indicators. Pure function."""
+def align_series_to_bars(
+    htf_bars: List[Bar],
+    ltf_bars: List[Bar],
+    ltf_series: List[Optional[float]],
+) -> List[Optional[float]]:
+    """Map a lower-TF series onto higher-TF bars (last LTF value at or before HTF ts)."""
+    out: List[Optional[float]] = [None] * len(htf_bars)
+    if not ltf_bars or not ltf_series:
+        return out
+    j = 0
+    last: Optional[float] = None
+    n_ltf = min(len(ltf_bars), len(ltf_series))
+    for i, hb in enumerate(htf_bars):
+        while j < n_ltf and ltf_bars[j].ts <= hb.ts:
+            if ltf_series[j] is not None:
+                last = ltf_series[j]
+            j += 1
+        out[i] = last
+    return out
+
+
+def compute_all(
+    bars: List[Bar],
+    params,
+    ltf_bars: Optional[List[Bar]] = None,
+) -> Indicators:
+    """Compute all indicators. Pure function.
+
+    ``ltf_bars`` optional lower-timeframe candles for exit BXT alignment.
+    """
     closes = [b.close for b in bars]
     highs = [b.high for b in bars]
     lows = [b.low for b in bars]
@@ -276,6 +311,22 @@ def compute_all(bars: List[Bar], params) -> Indicators:
     fvb_vals = fvb(bars, params.fvb_length)
     l1, l2, u1, u2 = fvb_bands(fvb_vals, closes, params.fvb_band_mult, period=params.fvb_length, smoothing="SMA")
     bx_long, bx_short = bxt(bars, params.bxt_l1, params.bxt_l2, params.bxt_l3)
+
+    exit_l1 = int(getattr(params, "bxt_exit_l1", 3))
+    exit_l2 = int(getattr(params, "bxt_exit_l2", 15))
+    if exit_l1 >= exit_l2:
+        exit_l2 = exit_l1 + 1
+    bx_exit_long, _ = bxt(bars, exit_l1, exit_l2)
+
+    bx_ltf_long: List[Optional[float]] = [None] * len(bars)
+    if ltf_bars:
+        ltf_l1 = int(getattr(params, "bxt_ltf_l1", 3))
+        ltf_l2 = int(getattr(params, "bxt_ltf_l2", 10))
+        if ltf_l1 >= ltf_l2:
+            ltf_l2 = ltf_l1 + 1
+        ltf_bx, _ = bxt(ltf_bars, ltf_l1, ltf_l2)
+        bx_ltf_long = align_series_to_bars(bars, ltf_bars, ltf_bx)
+
     hurst_vals = hurst(bars, params.hurst_window)
     bb_u, bb_m, bb_l = bollinger(closes)
 
@@ -301,4 +352,6 @@ def compute_all(bars: List[Bar], params) -> Indicators:
         bb_upper=bb_u,
         bb_middle=bb_m,
         bb_lower=bb_l,
+        bxt_exit_long=bx_exit_long,
+        bxt_ltf_long=bx_ltf_long,
     )

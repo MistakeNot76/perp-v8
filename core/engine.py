@@ -36,13 +36,6 @@ def open_position(
     atr = state.indicators.atr[signal.bar_idx] if signal.bar_idx < len(state.indicators.atr) else None
     tp, sl = compute_tp_sl(signal.direction, entry_price, atr, state.sym_cfg)
 
-    if signal.direction == Direction.LONG:
-        high_water = entry_price
-        low_water = entry_price
-    else:
-        high_water = entry_price
-        low_water = entry_price
-
     pos = Position(
         symbol=state.symbol,
         direction=signal.direction,
@@ -55,34 +48,40 @@ def open_position(
         initial_sl=sl,
         current_sl=sl,
         tp=tp,
-        high_water=high_water,
-        low_water=low_water,
+        high_water=entry_price,
+        low_water=entry_price,
+        entry_reason=signal.reason,
     )
     state.open_position = pos
     return pos
 
 
-def close_position(
-    state: EngineState,
+def _build_trade(
+    pos: Position,
     exit_price: float,
     exit_bar: Bar,
     reason: ExitReason,
+    qty: float,
+    notional: float,
+    fees_obj: FeeConfig,
+    bar_minutes: int,
+    include_entry_fee: bool,
 ) -> Trade:
-    """Close the open position. Validates math before returning."""
-    pos = state.open_position
-    if pos is None:
-        raise ValueError("No open position to close")
-
-    validate_exit_price(exit_price, exit_bar, pos.symbol)
-
     if pos.direction == Direction.LONG:
-        gross = (exit_price - pos.entry_price) * pos.size
+        gross = (exit_price - pos.entry_price) * qty
     else:
-        gross = (pos.entry_price - exit_price) * pos.size
+        gross = (pos.entry_price - exit_price) * qty
 
-    fees = state.fees.entry_cost(pos.notional) + state.fees.exit_cost(pos.notional)
-    slippage = state.fees.round_trip_slippage(pos.notional)
-    funding = state.fees.funding_cost(pos.notional, pos.bars_held, state.bar_minutes)
+    entry_fee = fees_obj.entry_cost(notional) if include_entry_fee else 0.0
+    exit_fee = fees_obj.exit_cost(notional)
+    # Slippage: full round-trip on first (full/partial) close that includes entry;
+    # exit-only leg on subsequent remainder close.
+    if include_entry_fee:
+        slippage = fees_obj.round_trip_slippage(notional)
+    else:
+        slippage = notional * fees_obj.slippage_pct / 100
+    funding = fees_obj.funding_cost(notional, pos.bars_held, bar_minutes)
+    fees = entry_fee + exit_fee
     net = gross - fees - slippage - funding
 
     trade = Trade(
@@ -92,8 +91,8 @@ def close_position(
         entry_ts=pos.entry_ts,
         exit_price=exit_price,
         exit_ts=exit_bar.ts,
-        qty=pos.size,
-        notional=pos.notional,
+        qty=qty,
+        notional=notional,
         leverage=pos.leverage,
         pnl_raw=gross,
         fees=fees,
@@ -104,11 +103,83 @@ def close_position(
         bars_held=pos.bars_held,
         initial_sl=pos.initial_sl,
         tp=pos.tp,
+        partial_tp_hit=pos.partial_tp_hit or reason == ExitReason.PARTIAL_TP,
+        entry_reason=pos.entry_reason,
     )
     validate_trade_math(trade, fees, trade.slippage)
+    return trade
+
+
+def close_position(
+    state: EngineState,
+    exit_price: float,
+    exit_bar: Bar,
+    reason: ExitReason,
+) -> Trade:
+    """Close the open position fully. Validates math before returning."""
+    pos = state.open_position
+    if pos is None:
+        raise ValueError("No open position to close")
+
+    validate_exit_price(exit_price, exit_bar, pos.symbol)
+    # If a partial already took the entry fee/slippage, remainder is exit-only costs
+    include_entry = not pos.partial_tp_hit
+    trade = _build_trade(
+        pos,
+        exit_price,
+        exit_bar,
+        reason,
+        qty=pos.size,
+        notional=pos.notional,
+        fees_obj=state.fees,
+        bar_minutes=state.bar_minutes,
+        include_entry_fee=include_entry,
+    )
     state.closed_trades.append(trade)
-    state.equity_curve.append(net)
+    state.equity_curve.append(trade.pnl_net)
     state.open_position = None
+    return trade
+
+
+def partial_close_position(
+    state: EngineState,
+    exit_price: float,
+    exit_bar: Bar,
+    qty: float,
+) -> Trade:
+    """Scale out part of the position; move SL to breakeven; keep remainder open."""
+    pos = state.open_position
+    if pos is None:
+        raise ValueError("No open position to partially close")
+    if qty <= 0 or qty >= pos.size:
+        raise ValueError(f"Invalid partial qty {qty} for size {pos.size}")
+
+    validate_exit_price(exit_price, exit_bar, pos.symbol)
+    frac = qty / pos.size
+    notional = pos.notional * frac
+    trade = _build_trade(
+        pos,
+        exit_price,
+        exit_bar,
+        ExitReason.PARTIAL_TP,
+        qty=qty,
+        notional=notional,
+        fees_obj=state.fees,
+        bar_minutes=state.bar_minutes,
+        include_entry_fee=True,
+    )
+    state.closed_trades.append(trade)
+    state.equity_curve.append(trade.pnl_net)
+
+    pos.size -= qty
+    pos.notional -= notional
+    pos.partial_tp_hit = True
+    pos.partial_tp_qty += qty
+    # Lock in breakeven on the runner
+    if pos.direction == Direction.LONG:
+        pos.current_sl = max(pos.current_sl, pos.entry_price)
+    else:
+        pos.current_sl = min(pos.current_sl, pos.entry_price)
     return trade
 
 
@@ -120,8 +191,18 @@ def step(state: EngineState, bar_idx: int) -> None:
     state.current_bar_idx = bar_idx
 
     if state.open_position is not None:
-        decision = check_bar_exit(state.open_position, bar, state.sym_cfg)
+        decision = check_bar_exit(
+            state.open_position,
+            bar,
+            state.sym_cfg,
+            indicators=state.indicators,
+            bar_idx=bar_idx,
+        )
         if decision.should_exit and decision.exit_price is not None:
+            if decision.is_partial and decision.partial_exit_qty > 0:
+                partial_close_position(state, decision.exit_price, bar, decision.partial_exit_qty)
+                # Remainder stays open; no new entry this bar
+                return
             close_position(state, decision.exit_price, bar, decision.reason)
             return
 

@@ -7,23 +7,28 @@ import os
 import json
 import yaml
 import subprocess
-import tempfile
+import time
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, List, Optional, Union
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import asyncio
+
+from core.config_loader import apply_overrides, load_config, save_config, merge_symbol_params_into_config
+from backtest.runner import run_backtest, parse_symbols
+from optimize.runner import optimize_symbols, persist_best, DEFAULT_GRID
 
 PROJECT_ROOT = Path(__file__).parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config.yaml"
 LOGS_DIR = PROJECT_ROOT / "data" / "logs"
 DIST_DIR = Path(__file__).parent / "dist"
+PARAMS_DIR = PROJECT_ROOT / "data" / "params"
 
 app = FastAPI(title="perp-v8")
 
@@ -62,6 +67,32 @@ def _read_jsonl(path: str) -> list:
                 except json.JSONDecodeError:
                     pass
     return out
+
+
+def _normalize_symbols(symbols: Union[str, List[str]]) -> List[str]:
+    if isinstance(symbols, list):
+        raw = ",".join(str(s) for s in symbols)
+    else:
+        raw = str(symbols)
+    try:
+        return parse_symbols(raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def _build_overrides(body: dict) -> dict:
+    """Collect nested + flat override fields from a request body dict."""
+    ov: Dict[str, Any] = {}
+    if isinstance(body.get("overrides"), dict):
+        ov.update(body["overrides"])
+    for section in ("strategy", "exits", "fees", "execution"):
+        if isinstance(body.get(section), dict):
+            ov[section] = {**(ov.get(section) or {}), **body[section]}
+    if body.get("leverage") is not None:
+        ov.setdefault("execution", {})["leverage"] = body["leverage"]
+    if body.get("notional") is not None:
+        ov.setdefault("execution", {})["notional_per_trade"] = body["notional"]
+    return ov
 
 # ── API Endpoints ──
 
@@ -127,59 +158,117 @@ def api_killswitch():
     _write_config(cfg)
     return {"kill_switch": cfg["risk"]["kill_switch"]}
 
+
 class BacktestRequest(BaseModel):
-    symbols: str
-    tf: str = "5m"
+    symbols: Union[str, List[str]]
+    tf: str = "15m"
     days: int = 90
-    overrides: dict = {}
+    strategy: Optional[dict] = None
+    exits: Optional[dict] = None
+    fees: Optional[dict] = None
+    execution: Optional[dict] = None
+    leverage: Optional[float] = None
+    notional: Optional[float] = None
+    overrides: dict = Field(default_factory=dict)
+
 
 @app.post("/api/backtest")
 def api_backtest(body: BacktestRequest):
-    symbols = body.symbols
-    if len(symbols.split(",")) > 10:
-        raise HTTPException(400, "Max 10 symbols")
-
+    symbols = _normalize_symbols(body.symbols)
     cfg = _read_config()
-    if body.overrides:
-        cfg_strategy = dict(cfg["strategy"])
-        cfg_exits = dict(cfg["exits"])
-        cfg_fees = dict(cfg["fees"])
-        cfg_exec = dict(cfg["execution"])
-        for k, v in body.overrides.items():
-            if k in cfg_strategy:
-                cfg_strategy[k] = v
-            elif k in cfg_exits:
-                cfg_exits[k] = v
-            elif k in cfg_fees:
-                cfg_fees[k] = v
-            elif k in cfg_exec:
-                cfg_exec[k] = v
-        bt_cfg = dict(cfg)
-        bt_cfg["strategy"] = cfg_strategy
-        bt_cfg["exits"] = cfg_exits
-        bt_cfg["fees"] = cfg_fees
-        bt_cfg["execution"] = cfg_exec
-    else:
-        bt_cfg = cfg
+    # Ensure data_dir is absolute relative to project
+    if not Path(cfg["system"]["data_dir"]).is_absolute():
+        cfg["system"]["data_dir"] = str(PROJECT_ROOT / cfg["system"]["data_dir"])
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        yaml.safe_dump(bt_cfg, f, default_flow_style=False, sort_keys=False)
-        tmp_config = f.name
-
+    ov = _build_overrides(body.model_dump())
+    t0 = time.time()
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "backtest.runner", "--symbols", symbols,
-             "--tf", body.tf, "--days", str(body.days), "--config", tmp_config],
-            capture_output=True, text=True, cwd=str(PROJECT_ROOT), timeout=300,
+        payload = run_backtest(symbols, cfg, tf=body.tf, days=body.days, overrides=ov)
+    except Exception as e:
+        raise HTTPException(500, f"Backtest failed: {e}")
+    payload["duration_s"] = time.time() - t0
+    # Sanitize inf for JSON
+    def _clean(obj):
+        if isinstance(obj, float) and (obj == float("inf") or obj == float("-inf")):
+            return None
+        if isinstance(obj, dict):
+            return {k: _clean(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_clean(v) for v in obj]
+        return obj
+    return _clean(payload)
+
+
+class OptimizeRequest(BaseModel):
+    symbols: Union[str, List[str]]
+    tf: Optional[str] = None
+    days: Optional[int] = 90
+    train_frac: float = 0.7
+    min_trades: int = 5
+    max_dd: float = 500.0
+    top_n: int = 10
+    grid: Optional[dict] = None
+    apply_config: bool = False
+    write_params: bool = True
+
+
+@app.post("/api/optimize")
+def api_optimize(body: OptimizeRequest):
+    symbols = _normalize_symbols(body.symbols)
+    cfg = _read_config()
+    if not Path(cfg["system"]["data_dir"]).is_absolute():
+        cfg["system"]["data_dir"] = str(PROJECT_ROOT / cfg["system"]["data_dir"])
+
+    grid = body.grid or DEFAULT_GRID
+    t0 = time.time()
+    try:
+        payload = optimize_symbols(
+            symbols,
+            cfg,
+            tf=body.tf,
+            days=body.days,
+            grid=grid,
+            train_frac=body.train_frac,
+            min_trades=body.min_trades,
+            max_dd=body.max_dd,
+            top_n=body.top_n,
         )
-        output = result.stdout + "\n" + result.stderr
-        if result.returncode != 0:
-            return {"error": f"Backtest failed (exit {result.returncode})", "output": output}
-        return {"output": output}
-    except subprocess.TimeoutExpired:
-        return {"error": "Backtest timed out (300s)"}
-    finally:
-        Path(tmp_config).unlink(missing_ok=True)
+    except Exception as e:
+        raise HTTPException(500, f"Optimize failed: {e}")
+
+    if body.write_params or body.apply_config:
+        # Reload fresh cfg for merge (avoid absolute data_dir pollution in yaml)
+        cfg_disk = _read_config()
+        persist = persist_best(
+            payload,
+            cfg_disk,
+            params_dir=str(PARAMS_DIR),
+            apply_config=body.apply_config,
+            config_path=str(CONFIG_PATH),
+        )
+        payload["persisted"] = persist
+
+    payload["duration_s"] = time.time() - t0
+
+    def _clean(obj):
+        if isinstance(obj, float) and (obj == float("inf") or obj == float("-inf")):
+            return None
+        if isinstance(obj, dict):
+            return {k: _clean(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_clean(v) for v in obj]
+        return obj
+    return _clean(payload)
+
+
+@app.get("/api/params/{symbol}")
+def api_get_params(symbol: str):
+    p = PARAMS_DIR / f"{symbol.upper()}.json"
+    if not p.exists():
+        raise HTTPException(404, f"No params for {symbol}")
+    with open(p) as f:
+        return json.load(f)
+
 
 @app.get("/api/validator")
 def api_validator(lines: int = 200):

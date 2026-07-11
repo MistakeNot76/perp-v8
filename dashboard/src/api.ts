@@ -194,6 +194,8 @@ export const api = {
   killSwitch: (action: "on" | "off" | { on: boolean; reason?: string }) =>
     postJson<{ ok: boolean; killswitch?: boolean }>("/api/killswitch", action),
   backtest: (req: BacktestRequest) => postJson<BacktestResponse>("/api/backtest", req),
+  optimize: (req: Record<string, unknown>) =>
+    postJson<Record<string, unknown>>("/api/optimize", req),
   validator: () => getJson<ValidatorResponse>("/api/validator"),
   cron: () => getJson<CronStatus>("/api/cron"),
 
@@ -208,6 +210,8 @@ export const api = {
   tailLog: (name: string, lines = 200) =>
     getJson<LogsResponse>(`/api/logs?file=${encodeURIComponent(name)}&lines=${lines}`),
   runBacktest: (req: BacktestRequest) => postJson<BacktestResponse>("/api/backtest", req),
+  runOptimize: (req: Record<string, unknown>) =>
+    postJson<Record<string, unknown>>("/api/optimize", req),
   toggleKillswitch: () =>
     postJson<{ ok: boolean; kill_switch: boolean }>("/api/killswitch", { on: true }),
 };

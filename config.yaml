@@ -25,19 +25,22 @@ symbols:
   - BTCUSDT
   - ETHUSDT
 
+# Optional per-symbol strategy/exit overrides (optimizer also writes data/params/{SYMBOL}.json)
+symbol_params: {}
+
 strategy:
   tf: 15m
   fvb_length: 20
   fvb_band_mult: 1.5
   bxt_l1: 5
   bxt_l2: 30
-  bxt_l3: 5
-  bxt_ll1: 30
-  bxt_ll2: 8
+  bxt_l3: 5              # unused (compat only)
+  bxt_ll1: 30            # unused (compat only)
+  bxt_ll2: 8             # unused (compat only)
   hurst_window: 100
   adx_period: 14
   adx_max: 30
-  adx_trend_max: 35
+  adx_trend_max: 35      # unused (compat only)
   rsi2_oversold: 10
   rsi2_overbought: 90
   hurst_max: 0.85
@@ -51,6 +54,29 @@ exits:
   breakeven_bars: 8
   trail_after_be: 1.0
   max_bars: 200
+  use_fixed_tp: true          # hard ATR/% take-profit
+  use_trail: true             # giveback-from-peak after breakeven_bars
+  # Mean-reversion target: both "vwap" and "inner" are supported — switch to A/B test
+  fvb_exit:
+    enabled: true
+    target: vwap              # vwap | inner
+  # Momentum exit: enable either or both (first hit wins)
+  bxt_exit:
+    same_tf:                  # faster BXT on the entry timeframe
+      enabled: true
+      l1: 3
+      l2: 15
+      confirmation_bars: 2
+    lower_tf:                 # true lower-TF BXT aligned onto entry bars
+      enabled: true
+      tf: 5m                  # must be lower than strategy.tf
+      l1: 3
+      l2: 10
+      confirmation_bars: 2
+  partial_tp:                 # also readable from execution.partial_tp
+    enabled: true
+    pct: 0.5
+    r_multiple: 1.0
 
 fees:
   maker_pct: 0.02

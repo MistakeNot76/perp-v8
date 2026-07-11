@@ -138,7 +138,11 @@ def test_backtest_no_phantom_exits(tmp_path):
         for t in result["trades"]:
             assert t["entry_price"] > 0
             assert t["exit_price"] > 0
-            assert t["exit_price"] > 0
+            assert "entry_reason" in t
+            # Find matching bar by exit_ts
+            bar = next((b for b in bars if b.ts == t["exit_ts"]), None)
+            if bar is not None:
+                assert bar.low - 1e-9 <= t["exit_price"] <= bar.high + 1e-9
 
 
 def test_backtest_returns_valid_structure(tmp_path):
